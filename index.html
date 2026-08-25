@@ -199,23 +199,13 @@
 <script>
 (function(){
 "use strict";
-/* ============================================================
-   NEON TETRIS — a modern guideline Tetris
-   - SRS rotation + wall kicks, 7-bag randomizer, hold, ghost
-   - lock delay w/ move reset, T-spin (3-corner + mini)
-   - back-to-back, combos, perfect clear, DAS/ARR, Web Audio
-   - 4-row hidden buffer zone above the playfield (20/4 matrix)
-   NOTE: `UI` is declared up-front so drawBoard() can never hit a
-   temporal-dead-zone error (it is called by resize() at boot).
-   ============================================================ */
+/* NEON TETRIS — modern guideline Tetris, single file, no deps. */
 
 const COLS=10, ROWS=20, BUFFER=4;
 const TOTAL=ROWS+BUFFER;
 const SPAWN_Y=2;
 let CELL=30;
 const COLORS={ I:"#37e0ff", O:"#ffd23f", T:"#c67bff", S:"#5eff9a", Z:"#ff5d6c", J:"#5a7bff", L:"#ff9d3c" };
-
-// UI feature toggles — declared FIRST so any draw path is safe.
 const UI={ghost:true, hold:true};
 
 const SHAPES={
@@ -253,6 +243,8 @@ const T_BACK ={0:[[0,2],[2,2]],1:[[0,0],[0,2]],2:[[0,0],[2,0]],3:[[2,0],[2,2]]};
 const board=document.getElementById("board"), bctx=board.getContext("2d");
 const fx=document.getElementById("fx"), fctx=fx.getContext("2d");
 const stars=document.getElementById("stars"), sctx=stars.getContext("2d");
+const nextList=document.getElementById("nextList");
+const el=id=>document.getElementById(id);
 
 function resize(){
   const maxH=window.innerHeight-190, maxW=Math.min(window.innerWidth-360, 360);
@@ -264,19 +256,17 @@ function resize(){
   stars.width=window.innerWidth; stars.height=window.innerHeight;
   drawBoard();
 }
-window.addEventListener("resize",resize);
 
+// NOTE: grid is initialized immediately (not []) so drawBoard() is always safe,
+// even on the very first resize() call at boot.
 const S={
-  grid:[], active:null, hold:null, canHold:true,
-  bag:[], queue:[],
-  score:0, level:1, lines:0, pieces:0,
-  combo:-1, b2b:false,
-  mode:"endless", sprintLines:40, ultraLines:150,
-  status:"menu",
+  grid:(function(){ const g=[]; for(let y=0;y<TOTAL;y++) g.push(new Array(COLS).fill(0)); return g; })(),
+  active:null, hold:null, canHold:true, bag:[], queue:[],
+  score:0, level:1, lines:0, pieces:0, combo:-1, b2b:false,
+  mode:"endless", sprintLines:40, ultraLines:150, status:"menu",
   dropCounter:0, dropInterval:1000, lockTimer:0, lockResetCount:0,
   das:0, dasDir:0, dasCharged:false, arrCounter:0, softHeld:false,
-  clearing:[], clearTimer:0, dropStreak:0,
-  best:0
+  clearing:[], clearTimer:0, dropStreak:0, best:0
 };
 try{ S.best=parseInt(localStorage.getItem("neonTetrisBest")||"0",10)||0; }catch(e){}
 
@@ -450,9 +440,8 @@ function loop(now){
   if(dt>100) dt=100;
   drawStars();
   if(S.status==="playing") update(dt);
-  // Guard drawing so a single bad frame never wedges the loop.
-  try{ drawBoard(); }catch(err){ console.error("drawBoard failed", err); }
-  try{ updateFX(dt); }catch(err){ console.error("updateFX failed", err); }
+  try{ drawBoard(); }catch(err){ console.error("drawBoard", err); }
+  try{ updateFX(dt); }catch(err){ console.error("updateFX", err); }
 }
 function update(dt){
   handleDAS(dt);
@@ -516,8 +505,11 @@ function drawBoard(){
   for(let x=1;x<COLS;x++){ bctx.beginPath(); bctx.moveTo(x*CELL,0); bctx.lineTo(x*CELL,board.height); bctx.stroke(); }
   for(let y=1;y<ROWS;y++){ bctx.beginPath(); bctx.moveTo(0,y*CELL); bctx.lineTo(board.width,y*CELL); bctx.stroke(); }
   bctx.restore();
-  // locked stack (only visible rows: grid row >= BUFFER)
-  for(let gy=BUFFER;gy<TOTAL;gy++) for(let x=0;x<COLS;x++){ const c=S.grid[gy][x]; if(c) drawBlock(bctx,x,gy-BUFFER,COLORS[c]); }
+  // locked stack (visible rows only)
+  for(let gy=BUFFER;gy<TOTAL;gy++){
+    const row=S.grid[gy]; if(!row) continue;
+    for(let x=0;x<COLS;x++){ const c=row[x]; if(c) drawBlock(bctx,x,gy-BUFFER,COLORS[c]); }
+  }
   // line-clear flash
   if(S.clearing.length && S.clearTimer>0){
     const a=Math.max(0,S.clearTimer/220);
@@ -560,7 +552,6 @@ function drawMiniCell(ctx,x,y,s,color){
   ctx.fillStyle=g; roundRect(ctx,x+1.5,y+1.5,s-3,s-3,3); ctx.fill();
   ctx.restore();
 }
-const nextList=document.getElementById("nextList");
 function buildNextList(){
   nextList.innerHTML="";
   for(let i=0;i<5;i++){
@@ -577,7 +568,6 @@ function updateNextUI(){
   for(let i=0;i<cells.length;i++) drawMini(cells[i].firstChild, S.queue[i]||null);
 }
 
-const el=id=>document.getElementById(id);
 function updateStats(){
   el("score").textContent=S.score.toLocaleString();
   el("best").textContent=Math.max(S.best,S.score).toLocaleString();
@@ -763,11 +753,11 @@ document.querySelectorAll("[data-mode]").forEach(b=>{
   b.onclick=()=>{ document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("on")); b.classList.add("on"); S.mode=b.dataset.mode; updateStats(); };
 });
 
-// ---------- boot ----------
-buildNextList(); resize(); S.grid=newGrid(); updateNextUI(); updateStats();
+// ---------- boot (grid already initialized, so resize()/drawBoard() are safe) ----------
+buildNextList(); resize(); updateNextUI(); updateStats();
 requestAnimationFrame(loop);
 
-window.__neonTetris = { state:S, draw:drawBoard, ui:UI };
+window.__neonTetris={state:S, draw:drawBoard, ui:UI};
 
 })();
 </script>
