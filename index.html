@@ -201,8 +201,12 @@
 "use strict";
 /* ============================================================
    NEON TETRIS — a modern guideline Tetris
-   Wrapped in an IIFE so no top-level let/const leak to window.
-   Board has a hidden 4-row buffer zone above the playfield.
+   - SRS rotation + wall kicks, 7-bag randomizer, hold, ghost
+   - lock delay w/ move reset, T-spin (3-corner + mini)
+   - back-to-back, combos, perfect clear, DAS/ARR, Web Audio
+   - 4-row hidden buffer zone above the playfield (20/4 matrix)
+   NOTE: `UI` is declared up-front so drawBoard() can never hit a
+   temporal-dead-zone error (it is called by resize() at boot).
    ============================================================ */
 
 const COLS=10, ROWS=20, BUFFER=4;
@@ -210,6 +214,9 @@ const TOTAL=ROWS+BUFFER;
 const SPAWN_Y=2;
 let CELL=30;
 const COLORS={ I:"#37e0ff", O:"#ffd23f", T:"#c67bff", S:"#5eff9a", Z:"#ff5d6c", J:"#5a7bff", L:"#ff9d3c" };
+
+// UI feature toggles — declared FIRST so any draw path is safe.
+const UI={ghost:true, hold:true};
 
 const SHAPES={
   I:[[[0,1],[1,1],[2,1],[3,1]],[[2,0],[2,1],[2,2],[2,3]],[[0,2],[1,2],[2,2],[3,2]],[[1,0],[1,1],[1,2],[1,3]]],
@@ -443,8 +450,9 @@ function loop(now){
   if(dt>100) dt=100;
   drawStars();
   if(S.status==="playing") update(dt);
-  drawBoard();
-  updateFX(dt);
+  // Guard drawing so a single bad frame never wedges the loop.
+  try{ drawBoard(); }catch(err){ console.error("drawBoard failed", err); }
+  try{ updateFX(dt); }catch(err){ console.error("updateFX failed", err); }
 }
 function update(dt){
   handleDAS(dt);
@@ -508,18 +516,22 @@ function drawBoard(){
   for(let x=1;x<COLS;x++){ bctx.beginPath(); bctx.moveTo(x*CELL,0); bctx.lineTo(x*CELL,board.height); bctx.stroke(); }
   for(let y=1;y<ROWS;y++){ bctx.beginPath(); bctx.moveTo(0,y*CELL); bctx.lineTo(board.width,y*CELL); bctx.stroke(); }
   bctx.restore();
+  // locked stack (only visible rows: grid row >= BUFFER)
   for(let gy=BUFFER;gy<TOTAL;gy++) for(let x=0;x<COLS;x++){ const c=S.grid[gy][x]; if(c) drawBlock(bctx,x,gy-BUFFER,COLORS[c]); }
+  // line-clear flash
   if(S.clearing.length && S.clearTimer>0){
     const a=Math.max(0,S.clearTimer/220);
     bctx.fillStyle="rgba(255,255,255,"+(a*0.85)+")";
     for(const y of S.clearing){ const vy=gridY(y); if(vy>=0&&vy<ROWS) bctx.fillRect(0,vy*CELL,board.width,CELL); }
   }
+  // ghost
   if(S.active && UI.ghost){
     const gy=ghostY(), cells=SHAPES[S.active.type][S.active.rot];
     bctx.save(); bctx.globalAlpha=0.22; bctx.strokeStyle=COLORS[S.active.type]; bctx.lineWidth=2;
     for(const [cx,cy] of cells){ const gx=S.active.x+cx, vy=gridY(gy+cy); if(vy<0||vy>=ROWS) continue; roundRect(bctx,gx*CELL+2,vy*CELL+2,CELL-4,CELL-4,4); bctx.stroke(); }
     bctx.restore();
   }
+  // active piece
   if(S.active){
     for(const [cx,cy] of SHAPES[S.active.type][S.active.rot]){
       const gx=S.active.x+cx, vy=gridY(S.active.y+cy); if(vy<0||vy>=ROWS) continue; drawBlock(bctx,gx,vy,COLORS[S.active.type]);
@@ -740,7 +752,6 @@ function gameOver(won=false){
 }
 function hideOverlays(){ el("startOverlay").classList.add("hidden"); el("pauseOverlay").classList.add("hidden"); el("overOverlay").classList.add("hidden"); }
 
-const UI={ghost:true, hold:true};
 el("startBtn").onclick=()=>{ Audio.setOn(true); startGame(); };
 el("againBtn").onclick=()=>startGame();
 el("resumeBtn").onclick=()=>togglePause();
@@ -752,11 +763,11 @@ document.querySelectorAll("[data-mode]").forEach(b=>{
   b.onclick=()=>{ document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("on")); b.classList.add("on"); S.mode=b.dataset.mode; updateStats(); };
 });
 
+// ---------- boot ----------
 buildNextList(); resize(); S.grid=newGrid(); updateNextUI(); updateStats();
 requestAnimationFrame(loop);
 
-// Expose a couple of internals for debugging (harmless if unused).
-window.__neonTetris = { state: S, draw: drawBoard };
+window.__neonTetris = { state:S, draw:drawBoard, ui:UI };
 
 })();
 </script>
