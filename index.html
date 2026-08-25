@@ -33,6 +33,7 @@
     box-shadow:0 10px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
   }
   .panel h2{margin:0 0 8px;font-size:11px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;font-weight:700;}
+  .board-wrap{position:relative;}
   .frame{
     position:relative; border-radius:16px; padding:10px;
     background:linear-gradient(180deg, rgba(94,224,255,.10), rgba(198,123,255,.08));
@@ -202,15 +203,17 @@
    SRS rotation + wall kicks, 7-bag randomizer, hold, ghost,
    lock delay w/ move reset, T-spin (3-corner + mini),
    back-to-back, combos, perfect clear, DAS/ARR, Web Audio.
+   Board has a hidden 4-row buffer zone above the playfield so
+   pieces always spawn in visible space (Guideline 20/4 matrix).
    ============================================================ */
 
-// ---------- Grid ----------
-const COLS = 10, ROWS = 20;
-let CELL = 30;
-const COLORS = { I:"#37e0ff", O:"#ffd23f", T:"#c67bff", S:"#5eff9a", Z:"#ff5d6c", J:"#5a7bff", L:"#ff9d3c" };
+const COLS=10, ROWS=20, BUFFER=4;   // visible rows + hidden buffer above
+const TOTAL=ROWS+BUFFER;            // total grid rows
+const SPAWN_Y=2;                    // rows inside the buffer where pieces spawn (visible)
+let CELL=30;
+const COLORS={ I:"#37e0ff", O:"#ffd23f", T:"#c67bff", S:"#5eff9a", Z:"#ff5d6c", J:"#5a7bff", L:"#ff9d3c" };
 
-// Tetromino rotation states. Local coords; spawn base at (3,0).
-const SHAPES = {
+const SHAPES={
   I:[[[0,1],[1,1],[2,1],[3,1]],[[2,0],[2,1],[2,2],[2,3]],[[0,2],[1,2],[2,2],[3,2]],[[1,0],[1,1],[1,2],[1,3]]],
   O:[[[1,0],[2,0],[1,1],[2,1]],[[1,0],[2,0],[1,1],[2,1]],[[1,0],[2,0],[1,1],[2,1]],[[1,0],[2,0],[1,1],[2,1]]],
   T:[[[1,0],[0,1],[1,1],[2,1]],[[1,0],[1,1],[2,1],[1,2]],[[0,1],[1,1],[2,1],[1,2]],[[1,0],[0,1],[1,1],[1,2]]],
@@ -219,9 +222,7 @@ const SHAPES = {
   J:[[[0,0],[0,1],[1,1],[2,1]],[[1,0],[2,0],[1,1],[1,2]],[[0,1],[1,1],[2,1],[2,2]],[[1,0],[1,1],[0,2],[1,2]]],
   L:[[[2,0],[0,1],[1,1],[2,1]],[[1,0],[1,1],[1,2],[2,2]],[[0,1],[1,1],[2,1],[0,2]],[[0,0],[1,0],[1,1],[1,2]]]
 };
-
-// SRS wall kicks. [dx,dy], +y = up. O piece never kicks.
-const KICKS_JLSTZ = {
+const KICKS_JLSTZ={
   "0>1":[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
   "1>0":[[0,0],[1,0],[1,-1],[0,2],[1,2]],
   "1>2":[[0,0],[1,0],[1,-1],[0,2],[1,2]],
@@ -231,7 +232,7 @@ const KICKS_JLSTZ = {
   "3>0":[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
   "0>3":[[0,0],[1,0],[1,1],[0,-2],[1,-2]]
 };
-const KICKS_I = {
+const KICKS_I={
   "0>1":[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
   "1>0":[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
   "1>2":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
@@ -241,17 +242,15 @@ const KICKS_I = {
   "3>0":[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
   "0>3":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]]
 };
-// T front/back diagonal corners (relative to center (1,1)) per rotation state.
-const T_FRONT = { 0:[[0,0],[2,0]], 1:[[2,0],[2,2]], 2:[[0,2],[2,2]], 3:[[0,0],[0,2]] };
-const T_BACK  = { 0:[[0,2],[2,2]], 1:[[0,0],[0,2]], 2:[[0,0],[2,0]], 3:[[2,0],[2,2]] };
+const T_FRONT={0:[[0,0],[2,0]],1:[[2,0],[2,2]],2:[[0,2],[2,2]],3:[[0,0],[0,2]]};
+const T_BACK ={0:[[0,2],[2,2]],1:[[0,0],[0,2]],2:[[0,0],[2,0]],3:[[2,0],[2,2]]};
 
-// ---------- Canvas ----------
 const board=document.getElementById("board"), bctx=board.getContext("2d");
 const fx=document.getElementById("fx"), fctx=fx.getContext("2d");
 const stars=document.getElementById("stars"), sctx=stars.getContext("2d");
 
 function resize(){
-  const maxH=window.innerHeight-190, maxW=window.innerWidth-360;
+  const maxH=window.innerHeight-190, maxW=Math.min(window.innerWidth-360, 360);
   let cell=Math.floor(Math.min(maxH/ROWS, maxW/COLS));
   cell=Math.max(18,Math.min(34,cell));
   CELL=cell;
@@ -279,23 +278,21 @@ try{ S.best=parseInt(localStorage.getItem("neonTetrisBest")||"0",10)||0; }catch(
 
 const LOCK_DELAY=500, MAX_LOCK_RESETS=15, DAS_MS=150, ARR_MS=40, SOFT_MULT=20;
 
-function newGrid(){ const g=[]; for(let y=0;y<ROWS;y++) g.push(new Array(COLS).fill(0)); return g; }
+function newGrid(){ const g=[]; for(let y=0;y<TOTAL;y++) g.push(new Array(COLS).fill(0)); return g; }
+
+// grid row -> visible board y offset (grid rows below BUFFER are visible)
+function gridY(gy){ return gy-BUFFER; }
 
 // ---------- Randomizer (7-bag) ----------
-function fillBag(){
-  const p=["I","O","T","S","Z","J","L"];
-  for(let i=p.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [p[i],p[j]]=[p[j],p[i]]; }
-  S.bag.push(...p);
-}
+function fillBag(){ const p=["I","O","T","S","Z","J","L"]; for(let i=p.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[p[i],p[j]]=[p[j],p[i]];} S.bag.push(...p); }
 function ensureQueue(){ while(S.queue.length<8){ if(S.bag.length===0) fillBag(); S.queue.push(S.bag.shift()); } }
 
 function spawnActive(){
   ensureQueue();
   const type=S.queue.shift(); ensureQueue();
-  const p={type, rot:0, x:3, y:0};
+  const p={type, rot:0, x:3, y:SPAWN_Y};
   if(collision(p.x,p.y,type,0)){
-    p.y=-1;
-    if(collision(p.x,p.y,type,0)){ p.y=-2; }
+    p.y=SPAWN_Y-1;
     if(collision(p.x,p.y,type,0)){ S.active=p; gameOver(); return; }
   }
   S.active=p;
@@ -310,8 +307,8 @@ function collision(px,py,type,rot){
   for(const [cx,cy] of SHAPES[type][rot]){
     const gx=px+cx, gy=py+cy;
     if(gx<0||gx>=COLS) return true;
-    if(gy<0) continue;
-    if(gy>=ROWS) return true;
+    if(gy>=TOTAL) return true;
+    if(gy<0) continue; // above the matrix is fine (can't happen with buffer, but safe)
     if(S.grid[gy][gx]!==0) return true;
   }
   return false;
@@ -324,24 +321,16 @@ function move(dx,dy){
   if(!collision(p.x+dx,p.y+dy,p.type,p.rot)){ p.x+=dx; p.y+=dy; onMoved(); return true; }
   return false;
 }
-function onMoved(){
-  if(grounded() && S.lockResetCount<MAX_LOCK_RESETS){ S.lockTimer=0; S.lockResetCount++; }
-}
+function onMoved(){ if(grounded() && S.lockResetCount<MAX_LOCK_RESETS){ S.lockTimer=0; S.lockResetCount++; } }
 function grounded(){ return S.active && collision(S.active.x,S.active.y+1,S.active.type,S.active.rot); }
-function ghostY(){
-  if(!S.active) return 0;
-  let gy=S.active.y;
-  while(!collision(S.active.x,gy+1,S.active.type,S.active.rot)) gy++;
-  return gy;
-}
+function ghostY(){ if(!S.active) return 0; let gy=S.active.y; while(!collision(S.active.x,gy+1,S.active.type,S.active.rot)) gy++; return gy; }
 function hardDrop(){
   if(!S.active) return;
-  const p=S.active;
-  const g=ghostY(), cells=SHAPES[p.type][p.rot], type=p.type, px=p.x;
+  const p=S.active, g=ghostY(), cells=SHAPES[p.type][p.rot], type=p.type, px=p.x;
   S.score+=(g-p.y)*2; p.y=g; S.dropCounter=0;
   lockPiece();
   Audio.sfx.drop(); S.dropStreak=6;
-  for(const [cx,cy] of cells){ const gx=px+cx, gy=g+cy; if(gy>=0&&gy<ROWS) spawnParticles(gx*CELL+CELL/2, gy*CELL+CELL/2, COLORS[type],3,CELL*0.6); }
+  for(const [cx,cy] of cells){ const gx=px+cx, gy=g+cy; const vy=gridY(gy); if(vy>=0&&vy<ROWS) spawnParticles(gx*CELL+CELL/2, vy*CELL+CELL/2, COLORS[type],3,CELL*0.6); }
 }
 
 // ---------- Rotation (SRS) ----------
@@ -363,16 +352,13 @@ function holdPiece(){
   const cur=S.active.type;
   if(S.hold){
     const h=S.hold; S.hold=cur;
-    S.active={type:h, rot:0, x:3, y:0};
-    if(collision(3,0,h,0)){
-      S.active.y=-1;
-      if(collision(3,-1,h,0)){ S.active.y=-2; }
-      if(collision(3,-2,h,0)){ gameOver(); return; }
+    S.active={type:h, rot:0, x:3, y:SPAWN_Y};
+    if(collision(3,SPAWN_Y,h,0)){
+      S.active.y=SPAWN_Y-1;
+      if(collision(3,SPAWN_Y-1,h,0)){ gameOver(); return; }
     }
     S.dropCounter=0; S.lockTimer=0; S.lockResetCount=0; S.dropInterval=gravityFor(S.level);
-  }else{
-    S.hold=cur; spawnActive();
-  }
+  }else{ S.hold=cur; spawnActive(); }
   S.canHold=false; Audio.sfx.hold(); updateNextUI();
 }
 
@@ -383,24 +369,21 @@ function lockPiece(){
   const cells=SHAPES[p.type][p.rot];
   for(const [cx,cy] of cells){
     const gx=p.x+cx, gy=p.y+cy;
-    if(gy>=0&&gy<ROWS&&gx>=0&&gx<COLS) S.grid[gy][gx]=p.type;
+    if(gy>=0&&gy<TOTAL&&gx>=0&&gx<COLS) S.grid[gy][gx]=p.type;
   }
   S.active=null;
   if(minYOfLast(p)<0){ gameOver(); return; }
 
   const cleared=clearLines();
-  // combo tracking
-  if(cleared>0) S.combo++;
-  else if(!tspin) S.combo=-1;   // T-spin (no lines) doesn't break combo
+  if(cleared>0) S.combo++; else if(!tspin) S.combo=-1;
 
   let points=0, label="", color="#fff", difficult=false;
   const lvl=S.level;
-  if(cleared===0){
-    if(tspin){ points=400*lvl; label="T‑SPIN"; color=COLORS.T; }
-  }else{
+  if(cleared===0){ if(tspin){ points=400*lvl; label="T‑SPIN"; color=COLORS.T; } }
+  else{
     difficult=true;
     if(tspin){
-      const base= tspin==="mini" ? [0,100,200,300][cleared] : [0,800,1200,1600][cleared];
+      const base = tspin==="mini" ? [0,100,200,300][cleared] : [0,800,1200,1600][cleared];
       points=base*lvl;
       label=["","T‑SPIN SINGLE","T‑SPIN DOUBLE","T‑SPIN TRIPLE"][cleared];
       color=COLORS.T;
@@ -410,12 +393,9 @@ function lockPiece(){
       color=cleared===4?COLORS.I:"#dfe8ff";
     }
   }
-  // back-to-back (difficult = Tetris or any T-spin line clear)
   if(difficult){ if(S.b2b){ points=Math.floor(points*1.5); label="B2B "+label; } S.b2b=true; }
   else if(cleared>0 && !tspin) S.b2b=false;
-  // combo bonus
   if(S.combo>0){ points+=50*S.combo*lvl; label=(label?label+" · ":"")+"COMBO ×"+(S.combo+1); }
-  // perfect clear
   if(cleared>0 && isPerfect()){
     points+=[0,800,1200,1800,2000][cleared]*lvl;
     label="PERFECT CLEAR!"; color=COLORS.O;
@@ -427,7 +407,6 @@ function lockPiece(){
   else if(tspin) Audio.sfx.clear(1,true);
   updateStats();
 
-  // level
   if(S.mode==="endless"){
     const nl=1+Math.floor(S.lines/10);
     if(nl>S.level){ S.level=nl; S.dropInterval=gravityFor(nl); Audio.sfx.levelup(); showPopup("LEVEL "+nl,COLORS.O,1); }
@@ -441,21 +420,20 @@ function minYOfLast(p){ let m=999; for(const [,cy] of SHAPES[p.type][p.rot]){ co
 
 function clearLines(){
   const full=[];
-  for(let y=0;y<ROWS;y++) if(S.grid[y].every(c=>c!==0)) full.push(y);
+  for(let y=0;y<TOTAL;y++) if(S.grid[y].every(c=>c!==0)) full.push(y);
   if(full.length===0) return 0;
-  // particles from the actual cleared colors (before removal)
-  for(const y of full) for(let x=0;x<COLS;x++){ const c=S.grid[y][x]; if(c) spawnParticles(x*CELL+CELL/2,y*CELL+CELL/2,COLORS[c],5,CELL*0.9); }
+  for(const y of full) for(let x=0;x<COLS;x++){ const c=S.grid[y][x]; const vy=gridY(y); if(c&&vy>=0&&vy<ROWS) spawnParticles(x*CELL+CELL/2,vy*CELL+CELL/2,COLORS[c],5,CELL*0.9); }
   S.clearing=full.slice(); S.clearTimer=220;
   for(const y of full){ S.grid.splice(y,1); S.grid.unshift(new Array(COLS).fill(0)); }
   return full.length;
 }
-function isPerfect(){ for(let y=0;y<ROWS;y++) if(S.grid[y].some(c=>c!==0)) return false; return true; }
+function isPerfect(){ for(let y=0;y<TOTAL;y++) if(S.grid[y].some(c=>c!==0)) return false; return true; }
 
 // T-spin: 3-corner rule. Requires last successful action be a rotation.
 function detectTSpin(p){
   if(p.type!=="T" || p.lastMove!=="rotate") return false;
   const cx=p.x+1, cy=p.y+1;
-  const inb=(x,y)=>x>=0&&x<COLS&&y>=0&&y<ROWS;
+  const inb=(x,y)=>x>=0&&x<COLS&&y>=0&&y<TOTAL;
   const filled=(x,y)=>{ if(!inb(x,y)) return true; return S.grid[y][x]!==0; };
   let front=0,back=0;
   for(const [dx,dy] of T_FRONT[p.rot]) if(filled(cx+dx,cy+dy)) front++;
@@ -544,24 +522,25 @@ function drawBoard(){
   for(let x=1;x<COLS;x++){ bctx.beginPath(); bctx.moveTo(x*CELL,0); bctx.lineTo(x*CELL,board.height); bctx.stroke(); }
   for(let y=1;y<ROWS;y++){ bctx.beginPath(); bctx.moveTo(0,y*CELL); bctx.lineTo(board.width,y*CELL); bctx.stroke(); }
   bctx.restore();
-  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){ const c=S.grid[y][x]; if(c) drawBlock(bctx,x,y,COLORS[c]); }
-  // line-clear flash (draw over the rows that are now empty)
+  // stack (only visible rows: grid row >= BUFFER)
+  for(let gy=BUFFER;gy<TOTAL;gy++) for(let x=0;x<COLS;x++){ const c=S.grid[gy][x]; if(c) drawBlock(bctx,x,gy-BUFFER,COLORS[c]); }
+  // line-clear flash
   if(S.clearing.length && S.clearTimer>0){
     const a=Math.max(0,S.clearTimer/220);
     bctx.fillStyle="rgba(255,255,255,"+(a*0.85)+")";
-    for(const y of S.clearing) bctx.fillRect(0,y*CELL,board.width,CELL);
+    for(const y of S.clearing){ const vy=gridY(y); if(vy>=0&&vy<ROWS) bctx.fillRect(0,vy*CELL,board.width,CELL); }
   }
   // ghost
   if(S.active && UI.ghost){
     const gy=ghostY(), cells=SHAPES[S.active.type][S.active.rot];
     bctx.save(); bctx.globalAlpha=0.22; bctx.strokeStyle=COLORS[S.active.type]; bctx.lineWidth=2;
-    for(const [cx,cy] of cells){ const gx=S.active.x+cx, gyy=gy+cy; if(gyy<0) continue; roundRect(bctx,gx*CELL+2,gyy*CELL+2,CELL-4,CELL-4,4); bctx.stroke(); }
+    for(const [cx,cy] of cells){ const gx=S.active.x+cx, vy=gridY(gy+cy); if(vy<0||vy>=ROWS) continue; roundRect(bctx,gx*CELL+2,vy*CELL+2,CELL-4,CELL-4,4); bctx.stroke(); }
     bctx.restore();
   }
   // active
   if(S.active){
     for(const [cx,cy] of SHAPES[S.active.type][S.active.rot]){
-      const gx=S.active.x+cx, gy=S.active.y+cy; if(gy<0) continue; drawBlock(bctx,gx,gy,COLORS[S.active.type]);
+      const gx=S.active.x+cx, vy=gridY(S.active.y+cy); if(vy<0||vy>=ROWS) continue; drawBlock(bctx,gx,vy,COLORS[S.active.type]);
     }
   }
 }
@@ -706,10 +685,7 @@ const Audio=(function(){
     if(s%4===0) mNote(noteFreq(bassNotes[Math.floor(s/4)%16]-12), 60/bpm/3, 0.5, t, "sawtooth");
     if(s%2===1 && Math.random()<0.85) mNote(noteFreq(leadPat[s/2|0]+12), 60/bpm/8, 0.14, t, "triangle");
   }
-  function scheduler(){
-    if(!musicOn) return; const c=ensure();
-    while(nextNoteTime<c.currentTime+0.12){ scheduleStep(step,nextNoteTime); step=(step+1)%32; nextNoteTime+=60/bpm/4; }
-  }
+  function scheduler(){ if(!musicOn) return; const c=ensure(); while(nextNoteTime<c.currentTime+0.12){ scheduleStep(step,nextNoteTime); step=(step+1)%32; nextNoteTime+=60/bpm/4; } }
   function startMusic(){ if(musicOn||!on) return; const c=ensure(); musicOn=true; nextNoteTime=c.currentTime+0.1; step=0; musicTimer=setInterval(scheduler,25); }
   function stopMusic(){ musicOn=false; if(musicTimer) clearInterval(musicTimer); musicTimer=null; }
   return { setOn, sfx, startMusic, stopMusic, ensure, toggle(){ setOn(!on); return on; } };
@@ -799,10 +775,7 @@ el("muteBtn").onclick=e=>{ const v=Audio.toggle(); e.target.textContent=v?"♪":
 el("ghostBtn").onclick=()=>{ UI.ghost=!UI.ghost; el("ghostBtn").textContent="Ghost "+(UI.ghost?"✓":"✕"); el("ghostBtn").classList.toggle("on",UI.ghost); };
 el("holdBtn").onclick=()=>{ UI.hold=!UI.hold; el("holdBtn").textContent="Hold "+(UI.hold?"✓":"✕"); el("holdBtn").classList.toggle("on",UI.hold); if(!UI.hold){ S.hold=null; updateNextUI(); } };
 document.querySelectorAll("[data-mode]").forEach(b=>{
-  b.onclick=()=>{
-    document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); S.mode=b.dataset.mode; updateStats();
-  };
+  b.onclick=()=>{ document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("on")); b.classList.add("on"); S.mode=b.dataset.mode; updateStats(); };
 });
 
 // ---------- boot ----------
