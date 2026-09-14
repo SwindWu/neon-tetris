@@ -31,12 +31,12 @@
     background:var(--panel); border:1px solid var(--panel-border); border-radius:16px;
     padding:12px; backdrop-filter:blur(8px); box-shadow:0 10px 40px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
   }
-  .row2{display:flex; gap:14px; justify-content:space-between;}
   .stat{font-size:12px; letter-spacing:2px; color:var(--txt-dim); text-transform:uppercase;}
   .stat b{display:block; font-size:26px; font-weight:800; color:#fff; text-shadow:0 0 14px rgba(0,229,255,.55); letter-spacing:1px; line-height:1.1;}
-  .mini{display:flex; gap:14px; justify-content:space-between;}
+  .pair{display:flex; gap:16px;}
+  .stat2{display:flex; gap:18px; justify-content:space-between; align-items:flex-end;}
+  .mini{display:flex; gap:14px; justify-content:space-between; align-items:flex-start;}
   .mini .p2{width:74%;}
-  .mini .p3{width:66%;}
   .label{font-size:11px; letter-spacing:2px; color:var(--txt-dim); margin:6px 0 6px; text-transform:uppercase;}
   .big{font-size:30px; font-weight:900; letter-spacing:2px;}
   #comboWrap{min-height:34px; transition:transform .12s ease, opacity .2s;}
@@ -56,9 +56,10 @@
     background:rgba(255,255,255,.04); border-radius:12px; border:1px solid rgba(120,220,255,.14);}
   .keys b{color:#fff;} .keys kbd{background:#1c2340;border:1px solid #33406b;border-bottom-width:2px;border-radius:5px;padding:1px 7px;font-family:inherit;font-size:11px;color:#d6e8ff;}
   .row{display:flex;gap:10px;flex-wrap:wrap; justify-content:center;}
-  .seg{display:flex;gap:6px;flex-wrap:wrap;}
+  .seg{display:flex;gap:6px;flex-wrap:wrap; align-items:flex-start;}
   .seg button{background:#161a33;color:#c9d6ef;border:1px solid #2a345c;border-radius:10px;padding:7px 11px;font-size:12.5px;cursor:pointer;transition:.15s;}
   .seg button:hover{border-color:#3d6bff;} .seg button.active{color:#fff;border-color:var(--neon);box-shadow:0 0 12px rgba(0,229,255,.45);}
+  #nextWrap,#holdWrap{justify-content:center;}
   .btn{background:linear-gradient(180deg,#12355c,#0c2a4a);color:#eaf8ff;border:1px solid #2b77b0;border-radius:12px;padding:11px 20px;font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.12);transition:.15s;}
   .btn:hover{transform:translateY(-1px);} .btn:active{transform:translateY(1px);}
   .btn.sec{background:#1a1f3a;border-color:#33406b;color:#cfe0ff;font-size:13px;padding:8px 14px;}
@@ -78,7 +79,6 @@
     :root{--cell: min(60px, 13.2vw);} #stage{gap:10px;} .mini{gap:8px;}
   }
   .footer{position:fixed;top:6px;right:14px;font-size:11px;color:#5c6a90;letter-spacing:1px;}
-  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
 </style>
 </head>
 <body>
@@ -91,12 +91,14 @@
 
   <div style="flex:1; min-width:230px; display:flex; flex-direction:column; gap:12px;">
     <div class="panel">
-      <div class="row2">
+      <div class="stat2">
         <div class="stat">分数<br><b id="score">0</b></div>
         <div class="stat">等级<br><b id="level">1</b></div>
       </div>
-      <div class="stat" style="margin-top:8px;">消行<br><b id="lines">0</b></div>
-      <div class="stat" style="margin-top:8px;">最高分<br><b id="hi">0</b></div>
+      <div class="stat" style="margin-top:10px;">消行<br><b id="lines">0</b></div>
+      <div class="stat" style="margin-top:10px;">最高分<br><b id="hi">0</b></div>
+      <div class="stat" style="margin-top:10px;">连击<br><b id="combo">—</b></div>
+      <div id="comboWrap"><div class="mini"><div><span class="stat" style="margin:0">状态</span><b id="status" style="font-size:18px;color:#6dff9b">READY</b></div></div></div>
     </div>
 
     <div class="panel">
@@ -183,7 +185,6 @@
   const PIECES = ['I','J','L','O','S','T','Z'];
 
   // ---------- 方块数据：state0 形状与旋转中心 ----------
-  // 坐标：x 向右，y 向下；旋转中心是固定点。
   const SHAPE = {
     I:{center:{x:1.5,y:1.5}, cells:[[0,1],[1,1],[2,1],[3,1]]},
     J:{center:{x:0,y:1},   cells:[[2,1],[1,1],[0,1],[0,0]]},
@@ -202,34 +203,33 @@
     PIECE_STATES[name] = [s.cells, rotCWcells(s.cells,c), rotCWcells(rotCWcells(s.cells,c),c), rotCWcells(rotCWcells(rotCWcells(s.cells,c),c),c)].map(a=>a.map(([x,y])=>[x,y]));
   }
 
-  // ---------- SRS 墙踢表（y 向下） ----------
-  // 每个方块 state -> { cw:[5个], ccw:[5个] }，O 方块无需墙踢。
+  // ---------- SRS 墙踢表（y 向下；首项 [0,0] 为不移位纯旋转） ----------
   const KICKS = {
     O:{0:{cw:[[0,0]],ccw:[[0,0]]},1:{cw:[[0,0]],ccw:[[0,0]]},2:{cw:[[0,0]],ccw:[[0,0]]},3:{cw:[[0,0]],ccw:[[0,0]]}},
-    J:{0:{cw:[[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       1:{cw:[[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[-1,0],[-1,1],[0,2],[-1,-2]]},
-       2:{cw:[[1,0],[1,1],[0,-2],[1,2]],ccw:[[-1,0],[-1,-1],[0,2],[-1,2]]},
-       3:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]}},
-    L:{0:{cw:[[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       1:{cw:[[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[-1,0],[-1,1],[0,2],[-1,-2]]},
-       2:{cw:[[1,0],[1,1],[0,-2],[1,2]],ccw:[[-1,0],[-1,-1],[0,2],[-1,2]]},
-       3:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]}},
-    S:{0:{cw:[[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[-1,0],[-1,1],[0,2],[-1,-2]]},
-       1:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       2:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       3:{cw:[[1,0],[1,1],[0,-2],[1,2]],ccw:[[-1,0],[-1,-1],[0,2],[-1,2]]}},
-    T:{0:{cw:[[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       1:{cw:[[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[-1,0],[-1,1],[0,2],[-1,-2]]},
-       2:{cw:[[1,0],[1,1],[0,-2],[1,2]],ccw:[[-1,0],[-1,-1],[0,2],[-1,2]]},
-       3:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]}},
-    Z:{0:{cw:[[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[-1,0],[-1,1],[0,2],[-1,-2]]},
-       1:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]},
-       2:{cw:[[1,0],[1,1],[0,-2],[1,2]],ccw:[[-1,0],[-1,-1],[0,2],[-1,2]]},
-       3:{cw:[[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[1,0],[1,-1],[0,-2],[1,-2]]}},
-    I:{0:{cw:[[-2,0],[1,0],[-2,1],[1,-2]],ccw:[[2,0],[-1,0],[2,-1],[-1,2]]},
-       1:{cw:[[2,0],[-1,0],[2,-1],[-1,2]],ccw:[[-2,0],[1,0],[-2,1],[1,-2]]},
-       2:{cw:[[-1,0],[2,0],[-1,-2],[2,1]],ccw:[[1,0],[-2,0],[1,2],[-2,-1]]},
-       3:{cw:[[1,0],[-2,0],[1,2],[-2,-1]],ccw:[[-1,0],[2,0],[-1,-2],[2,1]]}}
+    J:{0:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       1:{cw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[0,0],[-1,0],[-1,1],[0,2],[-1,-2]]},
+       2:{cw:[[0,0],[1,0],[1,1],[0,-2],[1,2]],ccw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]},
+       3:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]}},
+    L:{0:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       1:{cw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[0,0],[-1,0],[-1,1],[0,2],[-1,-2]]},
+       2:{cw:[[0,0],[1,0],[1,1],[0,-2],[1,2]],ccw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]},
+       3:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]}},
+    S:{0:{cw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[0,0],[-1,0],[-1,1],[0,2],[-1,-2]]},
+       1:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       2:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       3:{cw:[[0,0],[1,0],[1,1],[0,-2],[1,2]],ccw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]}},
+    T:{0:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       1:{cw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[0,0],[-1,0],[-1,1],[0,2],[-1,-2]]},
+       2:{cw:[[0,0],[1,0],[1,1],[0,-2],[1,2]],ccw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]},
+       3:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]}},
+    Z:{0:{cw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]],ccw:[[0,0],[-1,0],[-1,1],[0,2],[-1,-2]]},
+       1:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]},
+       2:{cw:[[0,0],[1,0],[1,1],[0,-2],[1,2]],ccw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]},
+       3:{cw:[[0,0],[-1,0],[-1,-1],[0,2],[-1,-2]],ccw:[[0,0],[1,0],[1,-1],[0,-2],[1,-2]]}},
+    I:{0:{cw:[[0,0],[-2,0],[1,0],[-2,1],[1,-2]],ccw:[[0,0],[2,0],[-1,0],[2,-1],[-1,2]]},
+       1:{cw:[[0,0],[2,0],[-1,0],[2,-1],[-1,2]],ccw:[[0,0],[-2,0],[1,0],[-2,1],[1,-2]]},
+       2:{cw:[[0,0],[-1,0],[2,0],[-1,-2],[2,1]],ccw:[[0,0],[1,0],[-2,0],[1,2],[-2,-1]]},
+       3:{cw:[[0,0],[1,0],[-2,0],[1,2],[-2,-1]],ccw:[[0,0],[-1,0],[2,0],[-1,-2],[2,1]]}}
   };
 
   // ---------- 随机器 ----------
@@ -301,7 +301,8 @@
     levelUp(){ [523.25,659.25,783.99,1046.5].forEach((f,i)=>this.tone(f,0.3,'triangle',0.12,i*0.04)); this.tone(131.81,0.5,'sine',0.1,0.1); },
     gameover(){ [440,415.3,392,370,350].forEach((f,i)=>this.tone(f,0.4,'sawtooth',0.12,i*0.09)); this.tone(90,0.8,'sine',0.12,0.5); },
     pause(){ this.tone(330,0.15,'sine',0.08); },
-    perfect(){ [880,1108.73].forEach((f,i)=>this.tone(f,0.16,'triangle',0.11,i*0.03)); }
+    perfect(){ [880,1108.73].forEach((f,i)=>this.tone(f,0.16,'triangle',0.11,i*0.03)); },
+    resume(){ if(this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
   };
 
   // ---------- 配乐：跟随游戏速度的循环节拍器 ----------
@@ -570,7 +571,7 @@
     drawPanelBg(c, el.width, el.height, 14, '#0b0b20');
     const cs=el.width/4;
     for(let i=0;i<4;i++){
-      if(!G.queue[i]){ drawSlot(c,i*cs,cs,el.height,el.width); continue; }
+      if(!G.queue[i]){ drawSlot(c,i*cs,cs,el.height); continue; }
       drawBox(c, G.queue[i], i*cs, 0, cs, el.height, cs);
     }
   }
@@ -583,7 +584,7 @@
     c.fillStyle=fill||'#0b0b20'; c.strokeStyle='rgba(120,220,255,0.18)'; c.lineWidth=1;
     roundRect(c,0,0,w,h,r); c.fill(); c.stroke();
   }
-  function drawSlot(c,bx,cell,h,w){
+  function drawSlot(c,bx,cell,h){
     c.strokeStyle='rgba(120,220,255,0.18)'; c.lineWidth=1;
     roundRect(c,bx+1,1,cell-2,h-2,6); c.stroke();
   }
@@ -759,26 +760,17 @@
   // ---------- 适配 ----------
   function fit(){
     const maxW = window.innerWidth - 60, maxH = window.innerHeight - 60;
-    const cw = CELL*W, ch = CELL*H;
-    const scale = Math.min(maxW/cw, maxH/ch, 1.15);
-    canvas.style.width=(cw*scale)+'px'; canvas.style.height=(ch*scale)+'px';
-    const next=document.getElementById('nextCanvas'), hold=document.getElementById('holdCanvas');
-    if(next) next.style.width=(next.width*cellScale)*'px'; if(hold) hold.style.width=(hold.width*cellScale)*'px';
-  }
-  let cellScale=1;
-  function fit2(){
-    const maxW = window.innerWidth - 60, maxH = window.innerHeight - 60;
     const scale = Math.min(maxW/(CELL*W), maxH/(CELL*H), 1.15);
-    canvas.style.width=(CELL*W*scale)+'px'; canvas.style.height=(CELL*H*scale)+'px'; cellScale=scale;
     const next=document.getElementById('nextCanvas'), hold=document.getElementById('holdCanvas');
-    if(next) next.style.width=(next.width*scale)+'px'; if(hold) hold.style.width=(hold.width*scale)+'px';
+    if(next) next.style.cssText=`width:${next.width*scale}px; height:${next.height*scale}px;`;
+    if(hold) hold.style.cssText=`width:${hold.width*scale}px; height:${hold.height*scale}px;`;
   }
-  window.addEventListener('resize',fit2);
+  window.addEventListener('resize',fit);
 
   // ---------- 启动 ----------
   G.hi = +(localStorage.getItem('nt-hi')||0);
   document.getElementById('hi').textContent=G.hi;
-  updateLock(); fit2(); addQueue(); updateHud();
+  updateLock(); fit(); addQueue(); updateHud();
   requestAnimationFrame(loop);
   showOverlay('NEON TETRIS','现代俄罗斯方块：霓虹视觉、SRS 墙踢、7-bag 随机器、Hold、幽灵块、T-Spin 与程序化音效配乐，尽在其中。', buildControls());
 })();
