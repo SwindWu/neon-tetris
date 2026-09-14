@@ -357,6 +357,7 @@
     const st=PIECE_STATES[name][0];
     const bw = Math.max(...st.map(c=>c[0]));
     const spawn = { name, rot:0, x:Math.floor((W-bw)/2), y:-Math.max(...st.map(c=>c[1])), st:st.map(c=>[...c]) };
+    if(collides(spawn,0,0,0,st)){ G.board=emptyBoard(); triggerGameOver(); return; }
     G.current = spawn; G.holdLocked=false;
     setStatus('PLAY');
   }
@@ -698,6 +699,7 @@
   function resume(){ if(G.paused){ G.paused=false; setStatus('PLAY'); Audio.resume(); hideOverlay(); } }
   function triggerGameOver(){
     G.gameOver=true; G.running=false; G.current=null; G.paused=false;
+    if(G.clearing) G.clearing=null;
     Audio.gameover(); document.getElementById('hi').textContent=G.hi;
     showOverlay('GAME OVER','最终得分 '+G.score+'', btn('再来一局','restart','btn'));
     document.getElementById('overlay').classList.remove('hidden');
