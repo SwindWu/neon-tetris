@@ -159,7 +159,7 @@
 </div>
 
 <div id="vu"><i></i></div>
-<div class="footer">v1.6 · SRS · FX Polish</div>
+<div class="footer">v1.7 · SRS · FX Polish II</div>
 
 <div id="overlay">
   <div class="card" id="card">
@@ -421,6 +421,10 @@ const Music = {
       this.nextTime = A.ctx.currentTime + 0.1;
       return;
     }
+    // 修复 B：后台节流导致时间轴落后时，重同步而不是瞬间补发
+    if (this.nextTime < A.ctx.currentTime){
+      this.nextTime = A.ctx.currentTime + 0.05;
+    }
     const bpm = 72 + Math.min(G.level * 2, 34);
     const spb = 60 / bpm, s16 = spb / 4;
     while (this.nextTime < A.ctx.currentTime + 0.22){
@@ -564,10 +568,17 @@ function doHold(){
 }
 function grounded(){ return G.current && collides(G.current.name, G.current.rot, G.current.x, G.current.y+1); }
 function resetLockIfGrounded(){ if (grounded() && G.lockResets < MAX_LOCK_RESETS){ G.lockAcc = 0; G.lockResets++; } }
+/* 修复 F：移动音效节流，避免快速 DAS 一帧多步时音效刷屏 */
+let lastMoveSfx = 0;
 function move(dx){
   if (!G.current || G.clearing) return false;
   const p = G.current;
-  if (!collides(p.name, p.rot, p.x+dx, p.y)){ p.x += dx; G.lastAction='move'; resetLockIfGrounded(); SFX.move(); return true; }
+  if (!collides(p.name, p.rot, p.x+dx, p.y)){
+    p.x += dx; G.lastAction='move'; resetLockIfGrounded();
+    const now = performance.now();
+    if (now - lastMoveSfx > 30){ SFX.move(); lastMoveSfx = now; }
+    return true;
+  }
   return false;
 }
 function tryRotate(dir){
@@ -591,7 +602,9 @@ function softDrop(){
   if (!G.current || G.clearing) return false;
   if (!collides(G.current.name, G.current.rot, G.current.x, G.current.y+1)){
     G.current.y++; G.score++; G.acc = 0; G.lastAction = 'soft';
-    SFX.soft(); updateHud(); return true;
+    const now = performance.now();
+    if (now - lastMoveSfx > 30){ SFX.soft(); lastMoveSfx = now; }
+    updateHud(); return true;
   }
   return false;
 }
@@ -634,11 +647,12 @@ function lockPiece(){
     const popX = canvas.width/2, popY = midRow*CELL + CELL/2;
     addScorePop(popX, popY, pts);
     if (tspin){
+      // 修复 A：T-SPIN 大字缩短到 1.0s，TETRIS 延迟 1.05s 接续，不再重叠
       addToast(tspin.mini ? 'T-SPIN MINI' : 'T-SPIN' + (full.length>1 ? ' ×'+full.length : ''),
-               '#b980ff', tspin.mini ? 22 : 30, 1.15, 0);
+               '#b980ff', tspin.mini ? 22 : 30, 1.0, 0);
     }
     if (full.length === 4){
-      addToast('TETRIS!', '#39c5ff', 36, 1.3, 0, tspin ? 0.5 : 0);
+      addToast('TETRIS!', '#39c5ff', 36, 1.3, 0, tspin ? 1.05 : 0);
       unlock('tetris', '首次 TETRIS！');
     }
     if (G.combo > 1){
@@ -682,7 +696,8 @@ function finishClear(){
     G.shake = 20;
     G.aurora = 1;
     addToast('PERFECT CLEAR!', '#6dff9b', 30, 1.8, 0);
-    addScorePop(canvas.width/2, canvas.height*0.55, pcPts, '#6dff9b');
+    // 修复 C：PC 跳字移到 72% 高度，远离 COMBO 字幕（52%）
+    addScorePop(canvas.width/2, canvas.height*0.72, pcPts, '#6dff9b');
     unlock('pc', '完美清除达成！');
   }
   if (G.score > G.hi){ G.hi = G.score; saveHi(); }
@@ -720,9 +735,8 @@ function comboBump(){
 }
 
 /* ============================================================
-   特效系统（可读性重制：深色底板 + 白字 + 彩色描边）
+   特效系统
    ============================================================ */
-/* --- 画布中央大字（带底板，自动缩字防溢出） --- */
 const toasts = [];
 function addToast(text, color, size, dur, slot, delay){
   toasts.push({ text:text, color:color, size:size||28, t:0, dur:dur||1.2,
@@ -745,7 +759,6 @@ function drawToasts(dt){
     ctx.globalAlpha = alpha;
     ctx.translate(canvas.width/2, baseY - p*26);
     ctx.scale(sc, sc);
-    // 自动缩字号：保证文字 + 内边距不超出画布宽度
     let size = tt.size;
     ctx.font = '900 ' + size + 'px "Segoe UI", system-ui, sans-serif';
     const maxW = canvas.width - 36;
@@ -757,17 +770,14 @@ function drawToasts(dt){
     }
     const padX = 16, padY = 10;
     const bw = tw + padX*2, bh = size*1.25 + padY*2;
-    // 深色底板
     ctx.fillStyle = 'rgba(4,7,18,0.82)';
     roundRect(ctx, -bw/2, -bh/2, bw, bh, 12);
     ctx.fill();
-    // 彩色描边光晕
     ctx.strokeStyle = tt.color; ctx.lineWidth = 1.6;
     ctx.shadowColor = tt.color; ctx.shadowBlur = 18;
     roundRect(ctx, -bw/2, -bh/2, bw, bh, 12);
     ctx.stroke();
     ctx.shadowBlur = 0;
-    // 白色主文字 + 彩色内光
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.shadowColor = tt.color; ctx.shadowBlur = 12;
     ctx.fillStyle = '#ffffff';
@@ -776,7 +786,6 @@ function drawToasts(dt){
     ctx.restore();
   }
 }
-/* --- 得分跳字（带底板胶囊，白字彩边，任何背景可读） --- */
 const pops = [];
 function addScorePop(x, y, pts, color){
   pops.push({ x:x, y:y, text:'+' + pts, t:0, dur:1.0, color:color||'#ffd60a' });
@@ -794,7 +803,6 @@ function drawPops(dt){
     const tw = ctx.measureText(s.text).width;
     const x = s.x, y = s.y - p*46;
     const pw = tw + 18, ph = 26;
-    // 深色胶囊底板
     ctx.fillStyle = 'rgba(4,7,18,0.82)';
     roundRect(ctx, x-pw/2, y-ph/2, pw, ph, 13);
     ctx.fill();
@@ -803,13 +811,11 @@ function drawPops(dt){
     roundRect(ctx, x-pw/2, y-ph/2, pw, ph, 13);
     ctx.stroke();
     ctx.shadowBlur = 0;
-    // 白色数字
     ctx.fillStyle = '#ffffff';
     ctx.fillText(s.text, x, y+1);
     ctx.restore();
   }
 }
-/* --- 连击火焰（限流：每 40ms 一批，数量随 combo 递增但封顶） --- */
 const FLAME_COLORS = ['#ff9a3d','#ffd60a','#ff5e78','#ffb84d'];
 let flameTimer = 0;
 function spawnFlames(dt){
@@ -830,7 +836,6 @@ function spawnFlames(dt){
     });
   }
 }
-/* --- Perfect Clear 极光 --- */
 function drawAurora(dt){
   if (G.aurora <= 0) return;
   G.aurora = Math.max(0, G.aurora - dt/2500);
@@ -862,7 +867,6 @@ function drawAurora(dt){
   }
   ctx.restore();
 }
-/* --- 成就系统 --- */
 let unlocked = {};
 try{ unlocked = JSON.parse(localStorage.getItem('nt-ach') || '{}'); }catch(e){ unlocked = {}; }
 function unlock(id, label){
@@ -957,9 +961,11 @@ function render(dt){
   if (G.current && !G.gameOver){ drawGhost(); drawPiece(G.current); }
   if (G.clearing) drawClearAnim();
   drawParticles();
-  drawAurora(dt);
-  drawToasts(dt);
-  drawPops(dt);
+  // 修复 D：暂停时冻结字幕/极光/跳字（传 0），恢复后继续播放
+  const tdt = G.paused ? 0 : dt;
+  drawAurora(tdt);
+  drawToasts(tdt);
+  drawPops(tdt);
   drawComboAura();
   ctx.restore();
 }
@@ -1112,7 +1118,7 @@ function updateHud(){
   document.getElementById('lines').textContent = G.lines;
   document.getElementById('hi').textContent = G.hi;
   document.getElementById('combo').textContent = G.combo > 1 ? G.combo + 'x' : '—';
-  if (G.score >= 10000) unlock('score10k', '单局破万分！');   // 修复：任何得分途径都能触发
+  if (G.score >= 10000) unlock('score10k', '单局破万分！');
 }
 function saveHi(){ try{ localStorage.setItem('nt-hi', String(G.hi)); }catch(e){} }
 
@@ -1221,7 +1227,7 @@ function newGame(){
   G.aurora = 0;
   G.acc = 0; G.lockAcc = 0; G.lockResets = 0;
   G.das = { dir:0, down:false, tDir:0, tDown:0 };
-  toasts.length = 0; pops.length = 0; flameTimer = 0;
+  toasts.length = 0; pops.length = 0; flameTimer = 0; lastMoveSfx = 0;
   G.gameOver = false; G.paused = false; G.running = true;
   A.init(); A.resume();
   Music.stop(false);
@@ -1289,8 +1295,11 @@ document.getElementById('helpBtn').onclick = function(){
     '• 连击 ≥2 触发火焰特效，连击越高火越旺</p>' +
     '<p class="sub" style="color:#ffd60a;">🏅 成就进度：' + achCount + ' / 6</p>' +
     keyHelpHTML();
-  showOverlay('帮助', '', [mkBtn('明白了', function(){})], true);
+  showOverlay('帮助', '', [], true);
+  // 修复 E：帮助内容插到按钮之前，按钮留在底部
   ovBody.appendChild(body);
+  const ok = mkBtn('明白了', function(){});
+  ovBody.appendChild(ok);
 };
 
 /* ---------- 后台标签页 ---------- */
@@ -1317,7 +1326,7 @@ G.hi = +(localStorage.getItem('nt-hi') || 0);
 fillQueue(); updateHud(); renderPreviews(); updateLockLabel(); fit();
 requestAnimationFrame(loop);
 showOverlay('NEON TETRIS',
-  'SRS 墙踢 · 7-bag · T-Spin · Perfect Clear。特效全面重制：深色底板字幕，任何堆叠高度都清晰可读。',
+  'SRS 墙踢 · 7-bag · T-Spin · Perfect Clear。字幕系统全面打磨：不再重叠、暂停冻结、后台不糊音。',
   [mkBtn('开始游戏', newGame)], false);
 })();
 </script>
