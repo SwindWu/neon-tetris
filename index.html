@@ -1,19 +1,4 @@
-
-                        <!DOCTYPE html>
-                        <html lang="en">
-                        <head>
-                            <meta charset="UTF-8">
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-							<style>
-								body {
-									background-color: white; /* Ensure the iframe has a white background */
-								}
-
-								
-							</style>
-                        </head>
-                        <body>
-                            <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -91,9 +76,23 @@
   .footer{position:fixed;top:6px;right:14px;font-size:11px;color:#5c6a90;letter-spacing:1px;}
   #vu{position:fixed;left:12px;bottom:10px;width:90px;height:3px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;z-index:45;}
   #vu i{display:block;height:100%;width:0;background:linear-gradient(90deg,#00e5ff,#ff2bd6);transition:width .08s linear;}
+  #achWrap{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;}
+  .achToast{
+    display:flex;align-items:center;gap:10px;
+    background:linear-gradient(135deg, rgba(28,20,60,.92), rgba(12,30,50,.92));
+    border:1px solid rgba(255,214,10,.5); border-radius:14px; padding:10px 18px;
+    box-shadow:0 8px 32px rgba(0,0,0,.55), 0 0 24px rgba(255,214,10,.25);
+    color:#ffe9a8; font-size:14px; font-weight:700; letter-spacing:1px;
+    animation:achIn .45s cubic-bezier(.2,1.4,.4,1) both, achOut .5s ease 2.6s both;
+  }
+  .achToast .medal{font-size:20px; filter:drop-shadow(0 0 6px rgba(255,214,10,.8));}
+  .achToast .small{font-size:10px;color:#c9b06a;font-weight:400;letter-spacing:2px;display:block;}
+  @keyframes achIn{ from{transform:translateY(-70px) scale(.8); opacity:0;} to{transform:translateY(0) scale(1); opacity:1;} }
+  @keyframes achOut{ from{opacity:1;} to{opacity:0; transform:translateY(-20px);} }
 </style>
 </head>
 <body>
+<div id="achWrap"></div>
 <div id="stage">
   <div class="panel" style="padding:8px;">
     <canvas id="board" width="300" height="600"></canvas>
@@ -160,7 +159,7 @@
 </div>
 
 <div id="vu"><i></i></div>
-<div class="footer">v1.2 · SRS · 7-bag · Reverb Audio</div>
+<div class="footer">v1.6 · SRS · FX Polish</div>
 
 <div id="overlay">
   <div class="card" id="card">
@@ -176,80 +175,61 @@
 (function(){
 /* ============================================================
    音频引擎：卷积混响 + 立体声延迟 + 压缩限幅
-   总线结构：
-     voice ─┬─ dry ────────────────────────────┐
-            ├─ reverbSend ─> Convolver ─> wet ─┤
-            └─ delaySend ──> Delay(反馈) ──────┴─> master ─> Compressor ─> destination
    ============================================================ */
 const A = {
   ctx:null, master:null, comp:null, verb:null, verbOut:null,
   delay:null, delayFb:null, delayFilt:null, delayOut:null,
-  sfx:null, music:null, analyser:null,
-  muted:false, musicOn:true,
-  ready:false
+  sfx:null, music:null,
+  sfxRev:null, sfxDly:null, musRev:null, musDly:null,
+  muted:false, musicOn:true, ready:false
 };
-
 function makeIR(sec, decay, bright){
   const rate = A.ctx.sampleRate;
   const len = Math.max(1, Math.floor(rate * sec));
   const buf = A.ctx.createBuffer(2, len, rate);
   for (let ch=0; ch<2; ch++){
     const d = buf.getChannelData(ch);
-    const pre = Math.floor(rate * 0.018);           // 预延迟，增加空间感
+    const pre = Math.floor(rate * 0.018);
     for (let i=0;i<len;i++){
       if (i < pre){ d[i] = 0; continue; }
       const t = (i - pre) / (len - pre);
       let s = (Math.random()*2 - 1) * Math.pow(1 - t, decay);
-      // 稀疏早期反射，让混响更"玻璃房"
       if (i % Math.floor(rate*0.031 + ch*7) === 0) s *= 2.2;
       d[i] = s * (bright || 1);
     }
   }
   return buf;
 }
-
 A.init = function(){
   if (A.ctx) return true;
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return false;
   A.ctx = new AC();
-
   A.comp = A.ctx.createDynamicsCompressor();
   A.comp.threshold.value = -14; A.comp.knee.value = 22; A.comp.ratio.value = 4;
   A.comp.attack.value = 0.004; A.comp.release.value = 0.22;
-
   A.master = A.ctx.createGain(); A.master.gain.value = 0.85;
   A.master.connect(A.comp); A.comp.connect(A.ctx.destination);
-
-  // 混响
   A.verb = A.ctx.createConvolver();
   A.verb.buffer = makeIR(3.2, 2.6, 1.0);
   A.verbOut = A.ctx.createGain(); A.verbOut.gain.value = 0.85;
   A.verb.connect(A.verbOut); A.verbOut.connect(A.master);
-
-  // 立体声乒乓延迟
   A.delay = A.ctx.createDelay(1.5); A.delay.delayTime.value = 0.315;
   A.delayFb = A.ctx.createGain(); A.delayFb.gain.value = 0.42;
   A.delayFilt = A.ctx.createBiquadFilter(); A.delayFilt.type = 'lowpass'; A.delayFilt.frequency.value = 2400;
-  const pan1 = A.ctx.createStereoPanner ? A.ctx.createStereoPanner() : null;
-  A.delay.connect(A.delayFilt);
-  A.delayFilt.connect(A.delayFb);
-  A.delayFb.connect(A.delay);
+  A.delay.connect(A.delayFilt); A.delayFilt.connect(A.delayFb); A.delayFb.connect(A.delay);
   A.delayOut = A.ctx.createGain(); A.delayOut.gain.value = 0.5;
-  A.delayFilt.connect(A.delayOut);
-  A.delayOut.connect(A.master);
-  if (pan1){ A.delayOut.connect(pan1); pan1.pan.value = 0.4; pan1.connect(A.verb); }
-
-  // 子总线
+  A.delayFilt.connect(A.delayOut); A.delayOut.connect(A.master);
+  if (A.ctx.createStereoPanner){
+    const pan1 = A.ctx.createStereoPanner();
+    A.delayOut.connect(pan1); pan1.pan.value = 0.4; pan1.connect(A.verb);
+  }
   A.sfx = A.ctx.createGain(); A.sfx.gain.value = 0.9; A.sfx.connect(A.master);
   A.music = A.ctx.createGain(); A.music.gain.value = 0.55; A.music.connect(A.master);
-
-  // 发送量辅助：用 gain 节点把信号送进 reverb / delay
   A.sfxRev = A.ctx.createGain(); A.sfxRev.gain.value = 1; A.sfxRev.connect(A.verb);
   A.sfxDly = A.ctx.createGain(); A.sfxDly.gain.value = 1; A.sfxDly.connect(A.delay);
   A.musRev = A.ctx.createGain(); A.musRev.gain.value = 1; A.musRev.connect(A.verb);
   A.musDly = A.ctx.createGain(); A.musDly.gain.value = 1; A.musDly.connect(A.delay);
-
   A.ready = true;
   return true;
 };
@@ -260,25 +240,19 @@ A.applyMute = function(){
   A.master.gain.cancelScheduledValues(t);
   A.master.gain.setTargetAtTime(A.muted ? 0.0001 : 0.85, t, 0.05);
 };
-
-/* ---------- 通用发声 ---------- */
-// 基础振荡器 voice，可指定混响/延迟发送量
 function voice(o){
   if (!A.ready || A.muted) return null;
-  const c = A.ctx, t = (o.at || c.currentTime);
+  const c = A.ctx, t = (o.at != null ? o.at : c.currentTime);
   const osc = c.createOscillator();
   osc.type = o.type || 'sine';
   osc.frequency.setValueAtTime(o.f, t);
   if (o.slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.slide), t + o.dur);
-  if (o.detune) osc.detune.value = o.detune;
-
   const g = c.createGain();
   const atk = o.atk != null ? o.atk : 0.008;
   const peak = Math.max(0.0002, o.gain || 0.15);
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(peak, t + Math.max(0.004, atk));
   g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-
   let node = osc;
   if (o.filter){
     const f = c.createBiquadFilter();
@@ -286,41 +260,34 @@ function voice(o){
     osc.connect(f); node = f;
   }
   node.connect(g);
-
   const dry = o.dry != null ? o.dry : 1;
   if (dry > 0){ const d = c.createGain(); d.gain.value = dry; g.connect(d); d.connect(o.bus || A.sfx); }
   if (o.rev > 0){ const r = c.createGain(); r.gain.value = o.rev; g.connect(r); r.connect(o.mus ? A.musRev : A.sfxRev); }
   if (o.dly > 0){ const d2 = c.createGain(); d2.gain.value = o.dly; g.connect(d2); d2.connect(o.mus ? A.musDly : A.sfxDly); }
-
   osc.start(t); osc.stop(t + o.dur + 0.06);
   return osc;
 }
-
-// FM 铃音（空灵核心音色）
 function bell(freq, dur, gain, at, ratio, bus){
   if (!A.ready || A.muted) return;
-  const c = A.ctx, t = at || c.currentTime;
+  const c = A.ctx, t = (at != null ? at : c.currentTime);
   const car = c.createOscillator(); car.type = 'sine'; car.frequency.value = freq;
   const mod = c.createOscillator(); mod.type = 'sine'; mod.frequency.value = freq * (ratio || 2.76);
   const mg = c.createGain();
   mg.gain.setValueAtTime(freq * 2.4, t);
   mg.gain.exponentialRampToValueAtTime(1, t + dur * 0.3);
   mod.connect(mg); mg.connect(car.frequency);
-
   const g = c.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(gain, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t + 0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  car.connect(g);
-  g.connect(bus || A.sfx);
+  car.connect(g); g.connect(bus || A.sfx);
   const rv = c.createGain(); rv.gain.value = 0.9; g.connect(rv); rv.connect(A.sfxRev);
   const dl = c.createGain(); dl.gain.value = 0.35; g.connect(dl); dl.connect(A.sfxDly);
   car.start(t); mod.start(t); car.stop(t + dur + 0.05); mod.stop(t + dur + 0.05);
 }
-
 function noiseBurst(o){
   if (!A.ready || A.muted) return;
-  const c = A.ctx, t = o.at || c.currentTime;
+  const c = A.ctx, t = (o.at != null ? o.at : c.currentTime);
   const len = Math.max(1, Math.floor(c.sampleRate * o.dur));
   const buf = c.createBuffer(1, len, c.sampleRate);
   const d = buf.getChannelData(0);
@@ -328,25 +295,22 @@ function noiseBurst(o){
   const src = c.createBufferSource(); src.buffer = buf;
   const f = c.createBiquadFilter(); f.type = o.type || 'highpass'; f.frequency.value = o.fc || 900; f.Q.value = o.q || 0.7;
   const g = c.createGain();
-  g.gain.setValueAtTime(o.gain || 0.2, t);
+  g.gain.setValueAtTime(Math.max(0.0002, o.gain || 0.2), t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-  src.connect(f); f.connect(g);
-  g.connect(A.sfx);
+  src.connect(f); f.connect(g); g.connect(A.sfx);
   if (o.rev > 0){ const r = c.createGain(); r.gain.value = o.rev; g.connect(r); r.connect(A.sfxRev); }
   if (o.dly > 0){ const d2 = c.createGain(); d2.gain.value = o.dly; g.connect(d2); d2.connect(A.sfxDly); }
   src.start(t);
 }
-
-/* ---------- 音效 ---------- */
 const SFX = {
   move(){ voice({f:1180, dur:.05, type:'sine', gain:.045, rev:.18, dry:.7}); },
   rotate(){
     voice({f:660, dur:.10, type:'sine', gain:.07, rev:.35, dly:.22, slide:990});
-    voice({f:1320, dur:.07, type:'triangle', gain:.035, rev:.5, at:.02});
+    if (A.ready) voice({f:1320, dur:.07, type:'triangle', gain:.035, rev:.5, at:A.ctx.currentTime+.02});
   },
   soft(){ voice({f:520, dur:.05, type:'sine', gain:.05, rev:.12}); },
   hard(){
-    voice({f:70, dur:.22, type:'sine', gain:.30, at:.002, dry:1});
+    voice({f:70, dur:.22, type:'sine', gain:.30, atk:.002, dry:1});
     voice({f:150, dur:.14, type:'triangle', gain:.14, slide:55});
     noiseBurst({dur:.16, fc:2600, gain:.16, rev:.4, dly:.15});
     noiseBurst({dur:.06, type:'bandpass', fc:5200, q:2.5, gain:.12, rev:.6});
@@ -357,29 +321,33 @@ const SFX = {
     bell(1046, .35, .05);
   },
   line(n){
+    if (!A.ready) return;
+    const t0 = A.ctx.currentTime;
     const scale = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51];
     const cnt = 2 + n;
     for (let i=0;i<cnt;i++){
       const f = scale[(i*2 + (4-n)) % scale.length];
-      voice({f:f, dur:.16+n*.03, type:'triangle', gain:.10, rev:.5, dly:.28, at:.005, at_:i*.035, at_offset:i*.035});
+      voice({f:f, dur:.16+n*.03, type:'triangle', gain:.10, rev:.5, dly:.28, at: t0 + i*0.045});
     }
-    for (let i=0;i<cnt;i++) bell(scale[(i*2+(4-n)) % scale.length], .5+n*.1, .05, A.ctx.currentTime + i*0.045, 2.4);
+    for (let i=0;i<cnt;i++) bell(scale[(i*2+(4-n)) % scale.length], .5+n*.1, .05, t0 + i*0.045, 2.4);
   },
   tetris(){
+    if (!A.ready) return;
+    const t0 = A.ctx.currentTime;
     const chord = [261.63, 329.63, 392.0, 523.25, 659.25];
-    chord.forEach(function(f,i){
-      voice({f:f, dur:1.4, type:'sawtooth', gain:.05, atk:.12, rev:.9, dly:.35, filter:'lowpass', fc:2200, bus:A.sfx});
-      voice({f:f*2, dur:1.1, type:'sine', gain:.05, atk:.2, rev:1.0});
+    chord.forEach(function(f){
+      voice({f:f, dur:1.4, type:'sawtooth', gain:.05, atk:.12, rev:.9, dly:.35, filter:'lowpass', fc:2200, at: t0});
+      voice({f:f*2, dur:1.1, type:'sine', gain:.05, atk:.2, rev:1.0, at: t0});
     });
-    noiseBurst({dur:.5, type:'bandpass', fc:6000, q:1.2, gain:.10, rev:1.0, dly:.4});
-    for (let i=0;i<6;i++) bell(1046.5*(1+i*0.12), .9, .045, A.ctx.currentTime + i*0.07, 3.1);
+    noiseBurst({dur:.5, type:'bandpass', fc:6000, q:1.2, gain:.10, rev:1.0, dly:.4, at:t0});
+    for (let i=0;i<6;i++) bell(1046.5*(1+i*0.12), .9, .045, t0 + i*0.07, 3.1);
   },
   tspin(mini){
+    if (!A.ready) return;
+    const t0 = A.ctx.currentTime;
     const base = mini ? 880 : 1174.66;
-    [base, base*1.5, base*2.02].forEach(function(f,i){
-      bell(f, mini ? .5 : .8, .06, A.ctx.currentTime + i*0.03, 3.4);
-    });
-    voice({f:base/2, dur:.3, type:'triangle', gain:.08, rev:.6, dly:.3});
+    [base, base*1.5, base*2.02].forEach(function(f,i){ bell(f, mini ? .5 : .8, .06, t0 + i*0.03, 3.4); });
+    voice({f:base/2, dur:.3, type:'triangle', gain:.08, rev:.6, dly:.3, at:t0});
   },
   combo(n){
     const f = 660 * Math.pow(2, Math.min(n,10)/12);
@@ -387,27 +355,32 @@ const SFX = {
     bell(f*2, .45, .04);
   },
   levelUp(){
-    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.51];
-    notes.forEach(function(f,i){
+    [523.25, 659.25, 783.99, 1046.5, 1318.51].forEach(function(f){
       voice({f:f, dur:.5, type:'triangle', gain:.08, atk:.03, rev:.8, dly:.45});
     });
     voice({f:200, dur:1.2, type:'sine', gain:.10, atk:.4, rev:.9, slide:900});
-    for (let i=0;i<8;i++) bell(1567.98*(1+i*0.05), .7, .03, A.ctx.currentTime + i*0.06, 2.02);
+    if (A.ready) for (let i=0;i<8;i++) bell(1567.98*(1+i*0.05), .7, .03, A.ctx.currentTime + i*0.06, 2.02);
   },
   perfect(){
-    // 类人声合唱：detuned sine 慢起 + 超长混响
     const chord = [220, 277.18, 329.63, 440, 554.37, 659.25];
-    chord.forEach(function(f,i){
+    chord.forEach(function(f){
       voice({f:f, dur:3.0, type:'sine', gain:.055, atk:.9, rev:1.2, dly:.3, dry:.5, mus:true});
       voice({f:f*1.004, dur:3.0, type:'sine', gain:.045, atk:1.1, rev:1.2, dry:.4, mus:true});
       voice({f:f*0.996, dur:3.0, type:'triangle', gain:.03, atk:1.3, rev:1.2, dry:.3, mus:true});
     });
     noiseBurst({dur:1.2, type:'bandpass', fc:4200, q:0.8, gain:.07, rev:1.4});
-    for (let i=0;i<10;i++) bell(2093*(1+i*0.03), 1.1, .028, A.ctx.currentTime + i*0.09, 1.98);
+    if (A.ready) for (let i=0;i<10;i++) bell(2093*(1+i*0.03), 1.1, .028, A.ctx.currentTime + i*0.09, 1.98);
+  },
+  achieve(){
+    if (!A.ready) return;
+    const t0 = A.ctx.currentTime;
+    [1046.5, 1318.51, 1567.98, 2093].forEach(function(f,i){
+      bell(f, .8, .05, t0 + i*0.09, 2.02);
+      voice({f:f/2, dur:.4, type:'triangle', gain:.05, rev:.8, at:t0 + i*0.09});
+    });
   },
   gameover(){
-    const notes = [440, 415.30, 392.0, 349.23, 293.66, 220];
-    notes.forEach(function(f,i){
+    [440, 415.30, 392.0, 349.23, 293.66, 220].forEach(function(f){
       voice({f:f, dur:.9, type:'sawtooth', gain:.06, atk:.05, rev:1.0, dly:.4, filter:'lowpass', fc:1200});
     });
     voice({f:82.41, dur:2.4, type:'sine', gain:.16, atk:.6, rev:.8});
@@ -417,19 +390,15 @@ const SFX = {
   resume(){ voice({f:300, dur:.3, type:'sine', gain:.07, rev:.6, slide:620}); }
 };
 
-/* ============================================================
-   音乐：前瞻式调度器（lookahead scheduler）
-   Am – F – C – G 循环，等级越高声部越多、速度越快
-   ============================================================ */
+/* ---------- 音乐：前瞻式调度器 ---------- */
 const CHORDS = [
-  { root:110.00, pad:[220.00, 261.63, 329.63], arp:[440,523.25,659.25,880,1046.5,1318.51] },   // Am
-  { root: 87.31, pad:[174.61, 220.00, 261.63], arp:[349.23,440,523.25,698.46,880,1046.5] },    // F
-  { root:130.81, pad:[196.00, 261.63, 329.63], arp:[523.25,659.25,783.99,1046.5,1318.51,1567.98] }, // C
-  { root: 98.00, pad:[196.00, 246.94, 293.66], arp:[392,493.88,587.33,783.99,987.77,1174.66] } // G
+  { root:110.00, pad:[220.00, 261.63, 329.63], arp:[440,523.25,659.25,880,1046.5,1318.51] },
+  { root: 87.31, pad:[174.61, 220.00, 261.63], arp:[349.23,440,523.25,698.46,880,1046.5] },
+  { root:130.81, pad:[196.00, 261.63, 329.63], arp:[523.25,659.25,783.99,1046.5,1318.51,1567.98] },
+  { root: 98.00, pad:[196.00, 246.94, 293.66], arp:[392,493.88,587.33,783.99,987.77,1174.66] }
 ];
 const ARP_PAT = [0,2,4,3,5,2,4,1,3,5,2,0,4,3,1,2];
 const LEAD   = [880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
-
 const Music = {
   playing:false, step:0, bar:0, nextTime:0, timer:null,
   start(){
@@ -447,7 +416,11 @@ const Music = {
     if (A.ready) A.music.gain.setTargetAtTime(0.0001, A.ctx.currentTime, fade ? 0.5 : 0.05);
   },
   tick(){
-    if (!this.playing || !A.ready || A.muted || !A.musicOn) return;
+    if (!A.ready) return;
+    if (!this.playing || A.muted || !A.musicOn){
+      this.nextTime = A.ctx.currentTime + 0.1;
+      return;
+    }
     const bpm = 72 + Math.min(G.level * 2, 34);
     const spb = 60 / bpm, s16 = spb / 4;
     while (this.nextTime < A.ctx.currentTime + 0.22){
@@ -460,48 +433,32 @@ const Music = {
   playStep(step, t, spb, s16){
     const ch = CHORDS[this.bar % 4];
     const lv = G.level;
-
-    // 1) Pad 铺底：每小节头，双 detuned saw，慢起音，重混响
     if (step === 0){
-      ch.pad.forEach(function(f, i){
-        voice({f:f, dur:spb*4.2, type:'sawtooth', gain:.028, atk:1.1, rev:1.1, dry:.35,
-               filter:'lowpass', fc:1100, q:.6, mus:true});
-        voice({f:f*1.005, dur:spb*4.2, type:'sawtooth', gain:.022, atk:1.4, rev:1.1, dry:.3,
-               filter:'lowpass', fc:900, mus:true});
-        voice({f:f/2, dur:spb*4.2, type:'sine', gain:.03, atk:.9, rev:.7, dry:.4, mus:true});
+      ch.pad.forEach(function(f){
+        voice({f:f, dur:spb*4.2, type:'sawtooth', gain:.028, atk:1.1, rev:1.1, dry:.35, filter:'lowpass', fc:1100, q:.6, mus:true, at:t});
+        voice({f:f*1.005, dur:spb*4.2, type:'sawtooth', gain:.022, atk:1.4, rev:1.1, dry:.3, filter:'lowpass', fc:900, mus:true, at:t});
+        voice({f:f/2, dur:spb*4.2, type:'sine', gain:.03, atk:.9, rev:.7, dry:.4, mus:true, at:t});
       });
     }
-
-    // 2) 贝斯脉冲
     if (step === 0 || step === 8 || (lv >= 4 && step === 11)){
-      voice({f:ch.root, dur:.34, type:'triangle', gain:.13, atk:.006, rev:.15, dry:1,
-             filter:'lowpass', fc:420, mus:true});
-      voice({f:ch.root*2, dur:.18, type:'sine', gain:.05, rev:.2, mus:true});
+      voice({f:ch.root, dur:.34, type:'triangle', gain:.13, atk:.006, rev:.15, dry:1, filter:'lowpass', fc:420, mus:true, at:t});
+      voice({f:ch.root*2, dur:.18, type:'sine', gain:.05, rev:.2, mus:true, at:t});
     }
-
-    // 3) 琶音（等级 3+）
     if (lv >= 3 && step % 2 === 1){
       const idx = ARP_PAT[(this.step + this.bar*3) % ARP_PAT.length];
       const f = ch.arp[idx % ch.arp.length];
-      voice({f:f, dur:.22, type:'triangle', gain:.055, atk:.004, rev:.55, dly:.55,
-             filter:'lowpass', fc:3600, mus:true});
+      voice({f:f, dur:.22, type:'triangle', gain:.055, atk:.004, rev:.55, dly:.55, filter:'lowpass', fc:3600, mus:true, at:t});
     }
-
-    // 4) 高音风铃旋律（等级 6+，稀疏）
     if (lv >= 6 && (step === 6 || step === 14) && Math.random() < 0.6){
       const f = LEAD[Math.floor(Math.random()*LEAD.length)];
-      voice({f:f, dur:.9, type:'sine', gain:.045, atk:.02, rev:1.1, dly:.6, mus:true});
+      voice({f:f, dur:.9, type:'sine', gain:.045, atk:.02, rev:1.1, dly:.6, mus:true, at:t});
     }
-
-    // 5) 微节奏 hi-hat（等级 5+）
     if (lv >= 5 && step % 2 === 0 && step !== 0){
       noiseBurst({dur:.035, type:'highpass', fc:7000, gain: lv>=8 ? .035 : .022, rev:.3, at:t});
     }
-
-    // 6) 连击 shimmer 层
     if (G.combo >= 3 && step % 4 === 2){
       const f = 1567.98 * Math.pow(2, Math.min(G.combo,8)/24);
-      voice({f:f, dur:.5, type:'sine', gain:.03, atk:.05, rev:1.2, dly:.7, mus:true});
+      voice({f:f, dur:.5, type:'sine', gain:.03, atk:.05, rev:1.2, dly:.7, mus:true, at:t});
     }
   }
 };
@@ -555,7 +512,6 @@ function ccwTable(cw){
 const KICKS = { I:Object.assign({}, KICK_CW_I, ccwTable(KICK_CW_I)), O:{} };
 for (const n of ['J','L','S','T','Z']) KICKS[n] = Object.assign({}, KICK_CW_JLSTZ, ccwTable(KICK_CW_JLSTZ));
 for (let r=0;r<4;r++){ KICKS.O[r+'>'+((r+1)%4)] = [[0,0]]; KICKS.O[r+'>'+((r+3)%4)] = [[0,0]]; }
-
 function fisherYates(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; } }
 function fillQueue(){
   while (G.queue.length < 7){
@@ -577,7 +533,8 @@ const G = {
   acc:0, lockAcc:0, lockResets:0, lastTime:0,
   gen:'7bag', dasType:'normal', lockDelay:500,
   lastAction:'', lastKickIndex:0,
-  das:{dir:0, down:false, t:0}
+  aurora:0,
+  das:{ dir:0, down:false, tDir:0, tDown:0 }
 };
 const emptyBoard = function(){ const b=[]; for(let y=0;y<H;y++) b.push(new Array(W).fill(0)); return b; };
 
@@ -671,16 +628,42 @@ function lockPiece(){
     if (full.length === 4) SFX.tetris(); else SFX.line(full.length);
     G.score += pts; G.lines += full.length;
     for (let i=0;i<full.length;i++) spawnClearParticles(full[i]);
+
+    /* ===== 特效：大字弹出 + 得分跳字 ===== */
+    const midRow = full[Math.floor(full.length/2)];
+    const popX = canvas.width/2, popY = midRow*CELL + CELL/2;
+    addScorePop(popX, popY, pts);
+    if (tspin){
+      addToast(tspin.mini ? 'T-SPIN MINI' : 'T-SPIN' + (full.length>1 ? ' ×'+full.length : ''),
+               '#b980ff', tspin.mini ? 22 : 30, 1.15, 0);
+    }
+    if (full.length === 4){
+      addToast('TETRIS!', '#39c5ff', 36, 1.3, 0, tspin ? 0.5 : 0);
+      unlock('tetris', '首次 TETRIS！');
+    }
+    if (G.combo > 1){
+      addToast('COMBO ×' + G.combo, '#ffd60a', 20, 1.0, 1);
+      if (G.combo >= 5) unlock('combo5', '5 连击达成！');
+    }
+    if (tspin) unlock('tspin', '首次 T-Spin！');
+
     G.shake = Math.min(18, 5 + full.length * 3.5);
     if (G.combo > 1) comboBump();
     const nl = 1 + Math.floor(G.lines/10);
-    if (nl > G.level){ G.level = nl; G.acc = 0; SFX.levelUp(); }
+    if (nl > G.level){ G.level = nl; G.acc = 0; SFX.levelUp(); if (nl >= 10) unlock('lvl10', '到达 10 级！'); }
     if (G.score > G.hi){ G.hi = G.score; saveHi(); }
     G.clearing = { rows: full, t: 0 };
     G.current = null;
   } else {
     G.combo = 0;
-    if (tspin){ G.score += (tspin.mini ? 100 : 400) * G.level; SFX.tspin(tspin.mini); }
+    if (tspin){
+      const tp = (tspin.mini ? 100 : 400) * G.level;
+      G.score += tp;
+      SFX.tspin(tspin.mini);
+      addToast(tspin.mini ? 'T-SPIN MINI' : 'T-SPIN', '#b980ff', 22, 1.0, 0);
+      addScorePop(canvas.width/2, Math.max(CELL, p.y*CELL), tp);
+      unlock('tspin', '首次 T-Spin！');
+    }
     spawnNext();
   }
   G.holdLocked = false;
@@ -692,7 +675,16 @@ function finishClear(){
   G.clearing = null;
   let empty = true;
   for (let y=0;y<H && empty;y++) for (let x=0;x<W && empty;x++) if (G.board[y][x]) empty = false;
-  if (empty){ G.score += (rows.length===4 ? 4000 : 2000) * G.level; SFX.perfect(); G.shake = 20; }
+  if (empty){
+    const pcPts = (rows.length===4 ? 4000 : 2000) * G.level;
+    G.score += pcPts;
+    SFX.perfect();
+    G.shake = 20;
+    G.aurora = 1;
+    addToast('PERFECT CLEAR!', '#6dff9b', 30, 1.8, 0);
+    addScorePop(canvas.width/2, canvas.height*0.55, pcPts, '#6dff9b');
+    unlock('pc', '完美清除达成！');
+  }
   if (G.score > G.hi){ G.hi = G.score; saveHi(); }
   updateHud();
   spawnNext();
@@ -727,6 +719,168 @@ function comboBump(){
   el.classList.add('bump'); setTimeout(function(){ el.classList.remove('bump'); }, 140);
 }
 
+/* ============================================================
+   特效系统（可读性重制：深色底板 + 白字 + 彩色描边）
+   ============================================================ */
+/* --- 画布中央大字（带底板，自动缩字防溢出） --- */
+const toasts = [];
+function addToast(text, color, size, dur, slot, delay){
+  toasts.push({ text:text, color:color, size:size||28, t:0, dur:dur||1.2,
+                slot:slot||0, delay:delay||0 });
+}
+function drawToasts(dt){
+  for (let i=toasts.length-1;i>=0;i--){
+    const tt = toasts[i];
+    tt.t += dt/1000;
+    if (tt.t < tt.delay) continue;
+    const p = tt.t / tt.dur;
+    if (p >= 1){ toasts.splice(i,1); continue; }
+    let sc;
+    if (p < 0.12) sc = 0.4 + (p/0.12)*0.78;
+    else if (p < 0.22) sc = 1.18 - ((p-0.12)/0.1)*0.18;
+    else sc = 1;
+    const alpha = p > 0.72 ? Math.max(0, 1-(p-0.72)/0.28) : 1;
+    const baseY = tt.slot === 1 ? canvas.height*0.52 : canvas.height*0.34;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(canvas.width/2, baseY - p*26);
+    ctx.scale(sc, sc);
+    // 自动缩字号：保证文字 + 内边距不超出画布宽度
+    let size = tt.size;
+    ctx.font = '900 ' + size + 'px "Segoe UI", system-ui, sans-serif';
+    const maxW = canvas.width - 36;
+    let tw = ctx.measureText(tt.text).width;
+    if (tw > maxW){
+      size = size * maxW / tw;
+      ctx.font = '900 ' + size + 'px "Segoe UI", system-ui, sans-serif';
+      tw = maxW;
+    }
+    const padX = 16, padY = 10;
+    const bw = tw + padX*2, bh = size*1.25 + padY*2;
+    // 深色底板
+    ctx.fillStyle = 'rgba(4,7,18,0.82)';
+    roundRect(ctx, -bw/2, -bh/2, bw, bh, 12);
+    ctx.fill();
+    // 彩色描边光晕
+    ctx.strokeStyle = tt.color; ctx.lineWidth = 1.6;
+    ctx.shadowColor = tt.color; ctx.shadowBlur = 18;
+    roundRect(ctx, -bw/2, -bh/2, bw, bh, 12);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 白色主文字 + 彩色内光
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = tt.color; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(tt.text, 0, 1);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+/* --- 得分跳字（带底板胶囊，白字彩边，任何背景可读） --- */
+const pops = [];
+function addScorePop(x, y, pts, color){
+  pops.push({ x:x, y:y, text:'+' + pts, t:0, dur:1.0, color:color||'#ffd60a' });
+}
+function drawPops(dt){
+  for (let i=pops.length-1;i>=0;i--){
+    const s = pops[i];
+    s.t += dt/1000;
+    const p = s.t / s.dur;
+    if (p >= 1){ pops.splice(i,1); continue; }
+    ctx.save();
+    ctx.globalAlpha = 1 - p*p;
+    ctx.font = '800 16px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(s.text).width;
+    const x = s.x, y = s.y - p*46;
+    const pw = tw + 18, ph = 26;
+    // 深色胶囊底板
+    ctx.fillStyle = 'rgba(4,7,18,0.82)';
+    roundRect(ctx, x-pw/2, y-ph/2, pw, ph, 13);
+    ctx.fill();
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1.3;
+    ctx.shadowColor = s.color; ctx.shadowBlur = 10;
+    roundRect(ctx, x-pw/2, y-ph/2, pw, ph, 13);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 白色数字
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(s.text, x, y+1);
+    ctx.restore();
+  }
+}
+/* --- 连击火焰（限流：每 40ms 一批，数量随 combo 递增但封顶） --- */
+const FLAME_COLORS = ['#ff9a3d','#ffd60a','#ff5e78','#ffb84d'];
+let flameTimer = 0;
+function spawnFlames(dt){
+  if (G.combo < 2 || !G.running || G.paused || G.gameOver) return;
+  flameTimer += dt;
+  if (flameTimer < 40) return;
+  flameTimer = 0;
+  const n = Math.min(1 + Math.floor(G.combo/2), 5);
+  for (let i=0;i<n;i++){
+    G.particles.push({
+      x: Math.random()*canvas.width,
+      y: canvas.height + 4,
+      vx: (Math.random()-.5)*1.4,
+      vy: -(2.2 + Math.random()*2.8),
+      life: 1, size: CELL*0.08 + Math.random()*CELL*0.14,
+      color: FLAME_COLORS[Math.floor(Math.random()*FLAME_COLORS.length)],
+      flame: true
+    });
+  }
+}
+/* --- Perfect Clear 极光 --- */
+function drawAurora(dt){
+  if (G.aurora <= 0) return;
+  G.aurora = Math.max(0, G.aurora - dt/2500);
+  const t = performance.now()/1000;
+  const a = G.aurora;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const hues = [180, 280, 130];
+  for (let b=0;b<3;b++){
+    const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    const h = hues[b];
+    grad.addColorStop(0, 'hsla(' + h + ',90%,60%,0)');
+    grad.addColorStop(0.5, 'hsla(' + h + ',90%,60%,' + (0.16*a) + ')');
+    grad.addColorStop(1, 'hsla(' + (h+40) + ',90%,60%,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    const amp = 40 + b*22;
+    const speed = 0.8 + b*0.35;
+    ctx.moveTo(0, canvas.height);
+    for (let x=0; x<=canvas.width; x+=10){
+      const y = canvas.height*0.3 + b*70
+              + Math.sin(x*0.02 + t*speed + b*2) * amp
+              + Math.sin(x*0.045 - t*speed*1.3) * amp*0.4;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+/* --- 成就系统 --- */
+let unlocked = {};
+try{ unlocked = JSON.parse(localStorage.getItem('nt-ach') || '{}'); }catch(e){ unlocked = {}; }
+function unlock(id, label){
+  if (unlocked[id]) return;
+  unlocked[id] = 1;
+  try{ localStorage.setItem('nt-ach', JSON.stringify(unlocked)); }catch(e){}
+  showAchToast(label);
+  SFX.achieve();
+}
+function showAchToast(label){
+  const wrap = document.getElementById('achWrap');
+  const el = document.createElement('div');
+  el.className = 'achToast';
+  el.innerHTML = '<span class="medal">🏅</span><span><span class="small">ACHIEVEMENT</span>' + label + '</span>';
+  wrap.appendChild(el);
+  setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 3300);
+}
+
 /* ---------- 主循环 ---------- */
 function loop(now){
   requestAnimationFrame(loop);
@@ -742,28 +896,29 @@ function loop(now){
       if (grounded()){ G.lockAcc += dt; if (G.lockAcc >= G.lockDelay) lockPiece(); }
       else G.lockAcc = 0;
     }
+    spawnFlames(dt);
   }
   updateParticles(dt);
-  render(now);
+  render(dt);
   updateVU();
 }
 function handleDAS(dt){
   const cfg = DAS[G.dasType];
   if (!isFinite(cfg.delay)) return;
   if (G.das.dir !== 0){
-    G.das.t += dt;
-    if (G.das.t >= cfg.delay){
-      const n = 1 + Math.floor((G.das.t - cfg.delay) / cfg.interval);
+    G.das.tDir += dt;
+    if (G.das.tDir >= cfg.delay){
+      const n = 1 + Math.floor((G.das.tDir - cfg.delay) / cfg.interval);
       for (let i=0;i<n;i++) move(G.das.dir);
-      G.das.t = cfg.delay + ((G.das.t - cfg.delay) % cfg.interval);
+      G.das.tDir = cfg.delay + ((G.das.tDir - cfg.delay) % cfg.interval);
     }
   }
   if (G.das.down){
-    G.das.t += dt;
-    if (G.das.t >= cfg.delay){
-      const n = 1 + Math.floor((G.das.t - cfg.delay) / cfg.interval);
+    G.das.tDown += dt;
+    if (G.das.tDown >= cfg.delay){
+      const n = 1 + Math.floor((G.das.tDown - cfg.delay) / cfg.interval);
       for (let i=0;i<n;i++) softDrop();
-      G.das.t = cfg.delay + ((G.das.t - cfg.delay) % cfg.interval);
+      G.das.tDown = cfg.delay + ((G.das.tDown - cfg.delay) % cfg.interval);
     }
   }
 }
@@ -771,18 +926,27 @@ function updateParticles(dt){
   const f = dt / 16.7;
   for (let i=G.particles.length-1;i>=0;i--){
     const pt = G.particles[i];
-    pt.x += pt.vx*f; pt.y += pt.vy*f; pt.vy += .25*f; pt.life -= .028*f;
+    pt.x += pt.vx*f; pt.y += pt.vy*f;
+    if (pt.flame){
+      pt.vy -= 0.06*f;
+      pt.vx += (Math.random()-.5)*0.5*f;
+      pt.life -= 0.035*f;
+    } else {
+      pt.vy += .25*f;
+      pt.life -= .028*f;
+    }
     if (pt.life <= 0) G.particles.splice(i,1);
   }
 }
 const vuBar = document.querySelector('#vu i');
 function updateVU(){
-  const target = G.shake > 0 ? Math.min(100, G.shake*7) : (G.running && !G.paused && !G.gameOver && A.musicOn && !A.muted ? 18 + Math.min(G.level*3, 30) : 0);
+  const target = G.shake > 0 ? Math.min(100, G.shake*7)
+    : (G.running && !G.paused && !G.gameOver && A.musicOn && !A.muted ? 18 + Math.min(G.level*3, 30) : 0);
   vuBar.style.width = target + '%';
 }
 
 /* ---------- 渲染 ---------- */
-function render(){
+function render(dt){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.save();
   if (G.shake > 0){
@@ -793,6 +957,22 @@ function render(){
   if (G.current && !G.gameOver){ drawGhost(); drawPiece(G.current); }
   if (G.clearing) drawClearAnim();
   drawParticles();
+  drawAurora(dt);
+  drawToasts(dt);
+  drawPops(dt);
+  drawComboAura();
+  ctx.restore();
+}
+function drawComboAura(){
+  if (G.combo < 2) return;
+  const pulse = 0.5 + 0.5*Math.sin(performance.now()/120);
+  const inten = Math.min(G.combo, 8) / 8;
+  ctx.save();
+  ctx.globalAlpha = (0.25 + 0.35*pulse) * inten;
+  ctx.strokeStyle = G.combo >= 5 ? '#ff5e78' : '#ffd60a';
+  ctx.lineWidth = 3 + 2*pulse;
+  ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 18;
+  ctx.strokeRect(2,2,W*CELL-4,H*CELL-4);
   ctx.restore();
 }
 function drawBg(){
@@ -871,10 +1051,12 @@ function drawParticles(){
   for (let i=0;i<G.particles.length;i++){
     const pt = G.particles[i];
     ctx.save();
-    ctx.globalAlpha = Math.max(0, pt.life);
-    ctx.shadowColor = pt.color; ctx.shadowBlur = 10;
+    ctx.globalAlpha = Math.max(0, pt.life) * (pt.flame ? 0.85 : 1);
+    ctx.shadowColor = pt.color; ctx.shadowBlur = pt.flame ? 16 : 10;
     ctx.fillStyle = pt.color;
-    ctx.beginPath(); ctx.arc(pt.x, pt.y, Math.max(1.5, pt.size*Math.max(.15,pt.life)), 0, Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    const sz = pt.flame ? pt.size * (0.4 + 0.6*pt.life) : pt.size*Math.max(.15,pt.life);
+    ctx.arc(pt.x, pt.y, Math.max(1.5, sz), 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
 }
@@ -930,6 +1112,7 @@ function updateHud(){
   document.getElementById('lines').textContent = G.lines;
   document.getElementById('hi').textContent = G.hi;
   document.getElementById('combo').textContent = G.combo > 1 ? G.combo + 'x' : '—';
+  if (G.score >= 10000) unlock('score10k', '单局破万分！');   // 修复：任何得分途径都能触发
 }
 function saveHi(){ try{ localStorage.setItem('nt-hi', String(G.hi)); }catch(e){} }
 
@@ -946,10 +1129,16 @@ window.addEventListener('keydown', function(e){
   if (G.gameOver && (e.key === 'r' || e.key === 'R')){ newGame(); return; }
   if (G.paused || !G.running) return;
   const act = KEYMAP[e.key]; if (!act) return;
-  if (act === 'left'){ if (!e.repeat) move(-1); G.das.dir = -1; G.das.t = 0; }
-  else if (act === 'right'){ if (!e.repeat) move(1); G.das.dir = 1; G.das.t = 0; }
-  else if (act === 'down'){ if (!e.repeat) softDrop(); G.das.down = true; G.das.t = 0; }
-  else if (act === 'cw') tryRotate(1);
+  if (act === 'left'){
+    if (!e.repeat){ move(-1); G.das.dir = -1; G.das.tDir = 0; }
+  }
+  else if (act === 'right'){
+    if (!e.repeat){ move(1); G.das.dir = 1; G.das.tDir = 0; }
+  }
+  else if (act === 'down'){
+    if (!e.repeat){ softDrop(); G.das.down = true; G.das.tDown = 0; }
+  }
+  else if (act === 'cw')  tryRotate(1);
   else if (act === 'ccw') tryRotate(-1);
   else if (act === 'hard') hardDrop();
   else if (act === 'hold') doHold();
@@ -1029,8 +1218,10 @@ function newGame(){
   G.score = 0; G.lines = 0; G.level = 1; G.combo = 0;
   G.hold = null; G.holdLocked = false; G.current = null;
   G.particles = []; G.clearing = null; G.shake = 0;
+  G.aurora = 0;
   G.acc = 0; G.lockAcc = 0; G.lockResets = 0;
-  G.das = {dir:0, down:false, t:0};
+  G.das = { dir:0, down:false, tDir:0, tDown:0 };
+  toasts.length = 0; pops.length = 0; flameTimer = 0;
   G.gameOver = false; G.paused = false; G.running = true;
   A.init(); A.resume();
   Music.stop(false);
@@ -1087,16 +1278,28 @@ document.getElementById('soundBtn').onclick = function(){
   this.textContent = A.muted ? '解除静音' : '静音';
 };
 document.getElementById('helpBtn').onclick = function(){
+  const achCount = Object.keys(unlocked).length;
   const body = document.createElement('div');
   body.innerHTML =
     '<p class="sub">• 消行 100 / 300 / 500 / 800 × 等级<br>' +
     '• 连击额外 +50 × 连击数 × 等级，中断重置<br>' +
     '• T-Spin：T 方块以旋转落入坑中，前角填满为标准，否则 Mini<br>' +
     '• Perfect Clear：消行后整盘清空，+2000（Tetris 时 +4000）× 等级<br>' +
-    '• 音乐随等级加速并增加声部：Lv3 琶音 / Lv5 节奏 / Lv6 风铃旋律</p>' + keyHelpHTML();
+    '• 音乐随等级加速并增加声部：Lv3 琶音 / Lv5 节奏 / Lv6 风铃旋律<br>' +
+    '• 连击 ≥2 触发火焰特效，连击越高火越旺</p>' +
+    '<p class="sub" style="color:#ffd60a;">🏅 成就进度：' + achCount + ' / 6</p>' +
+    keyHelpHTML();
   showOverlay('帮助', '', [mkBtn('明白了', function(){})], true);
   ovBody.appendChild(body);
 };
+
+/* ---------- 后台标签页 ---------- */
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden && A.ready){
+    Music.nextTime = A.ctx.currentTime + 0.1;
+    G.lastTime = 0;
+  }
+});
 
 /* ---------- 自适应 ---------- */
 function fit(){
@@ -1114,16 +1317,9 @@ G.hi = +(localStorage.getItem('nt-hi') || 0);
 fillQueue(); updateHud(); renderPreviews(); updateLockLabel(); fit();
 requestAnimationFrame(loop);
 showOverlay('NEON TETRIS',
-  'SRS 墙踢 · 7-bag · Hold · 幽灵块 · T-Spin · Perfect Clear。全新卷积混响音景：Pad 铺底、琶音与风铃随等级层层展开。',
+  'SRS 墙踢 · 7-bag · T-Spin · Perfect Clear。特效全面重制：深色底板字幕，任何堆叠高度都清晰可读。',
   [mkBtn('开始游戏', newGame)], false);
 })();
 </script>
 </body>
 </html>
-
-							<script>
-                            	
-							</script>
-                        </body>
-                        </html>
-                    
